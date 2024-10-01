@@ -12,7 +12,7 @@ export async function disputeProposal(proposal: Proposal, config: Config) {
         return console.log("✅ Proposal already disputed. Continuing...");
     }
     if (state !== RequestState.Proposed) {
-        throw new Error(`Proposal cannot be disputed in current state: ${RequestState[state]}`);
+        return console.log(`❌ Proposal cannot be disputed in current state: ${RequestState[state]}. Continuing...`);
     }
     console.log(`🔄 Disputing proposal...`);
     const gasFeeOverride = await getGasFeeOverride(config.multiplier, config.provider);

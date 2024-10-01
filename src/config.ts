@@ -1,6 +1,7 @@
 import { getRetryProvider } from "@uma/common";
 import type { Provider } from "@ethersproject/abstract-provider";
 import { ethers } from "ethers";
+import { Options } from "./handler";
 
 export interface Config {
     provider: Provider;
@@ -8,10 +9,12 @@ export interface Config {
     maxBlockLookBack: number;
     onlyPolymarket: boolean;
     wallet: ethers.Wallet;
-    multiplier: string;
+    multiplier: number;
+    sortRemainingTime: boolean;
+    sortBondSize: boolean;
 }
 
-export const initConfig = async (env: NodeJS.ProcessEnv): Promise<Config> => {
+export const initConfig = async (env: NodeJS.ProcessEnv, options: Options): Promise<Config> => {
     if (!env.CHAIN_ID) throw new Error("CHAIN_ID must be defined in env");
     const chainId = Number(env.CHAIN_ID);
 
@@ -19,12 +22,16 @@ export const initConfig = async (env: NodeJS.ProcessEnv): Promise<Config> => {
 
     const maxBlockLookBack = env.MAX_BLOCK_LOOK_BACK ? Number(env.MAX_BLOCK_LOOK_BACK) : 3499;
 
-    const onlyPolymarket = env.ONLY_POLYMARKET === "true";
+    const onlyPolymarket = options.onlyPolymarket;
 
     if (!env.PRIVATE_KEY) throw new Error("PRIVATE_KEY must be defined in env");
     const wallet = new ethers.Wallet(env.PRIVATE_KEY).connect(provider);
 
-    const multiplier = env.MULTIPLIER ? env.MULTIPLIER : "1";
+    const multiplier = options.multiplier;
+
+    const sortRemainingTime = options.sortRemainingTime;
+
+    const sortBondSize = options.sortBondSize;
 
     return {
         provider,
@@ -32,6 +39,8 @@ export const initConfig = async (env: NodeJS.ProcessEnv): Promise<Config> => {
         maxBlockLookBack,
         onlyPolymarket,
         wallet,
-        multiplier
+        multiplier,
+        sortRemainingTime,
+        sortBondSize,
     };
 };

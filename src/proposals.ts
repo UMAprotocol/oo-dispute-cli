@@ -81,17 +81,17 @@ export async function fetchProposals(config: Config): Promise<Proposal[]> {
             };
         }));
 
-    return proposals;
-}
+    const sortedProposals = proposals.sort((a, b) => {
+        if (config.sortRemainingTime) {
+            return a.proposalExpirationTimestamp.toNumber() - b.proposalExpirationTimestamp.toNumber();
+        }
 
-export async function fetchWalletTokenBalance(config: Config, tokenAddress: string) {
-    const tokenContract = getERC20ContractInstance(config.provider, tokenAddress);
-    const balance = await tokenContract.balanceOf(config.wallet.address);
-    const decimals = await tokenContract.decimals();
-    const symbol = await tokenContract.symbol();
-    return {
-        balance: balance,
-        decimals: decimals,
-        symbol: symbol
-    };
+        if (config.sortBondSize) {
+            return b.bond.toNumber() - a.bond.toNumber();
+        }
+
+        return 0;
+    });
+
+    return sortedProposals;
 }

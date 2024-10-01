@@ -1,8 +1,8 @@
-# Polymarket Mass Dispute CLI
+# Mass Dispute CLI
 
 ## Overview
 
-The Polymarket Mass Dispute CLI is a command-line tool designed to facilitate the efficient dispute of multiple UMA Optimistic Oracle proposals. This tool allows users to dispute multiple proposals quickly and effectively.
+The Mass Dispute CLI is a command-line tool designed to facilitate the efficient dispute of multiple UMA Optimistic Oracle proposals in the Optimistic Oracle V2 on the supported chains.
 
 ## Prerequisites
 
@@ -11,23 +11,17 @@ The Polymarket Mass Dispute CLI is a command-line tool designed to facilitate th
 
 ## Installation
 
-1. **Clone the repository:**
+1. **Install dependencies:**
 
-   ```bash
-   git clone <repository-url>
-   cd mass-dispute-cli
-   ```
+```bash
+yarn install
+```
 
-2. **Install dependencies:**
+2. **Build the project:**
 
-   ```bash
-   yarn install
-   ```
-
-3. **Build the project:**
-   ```bash
-   yarn build
-   ```
+```bash
+yarn build
+```
 
 ## Usage
 
@@ -36,38 +30,32 @@ The Polymarket Mass Dispute CLI is a command-line tool designed to facilitate th
 To start the CLI, use the following command:
 
 ```bash
-yarn start
+yarn dispute
 ```
 
 ### Arguments
 
 The CLI accepts the following arguments:
 
-- `-v` or `--version`: Display the current version of the CLI.
 - `-h` or `--help`: Display help information.
-- `-c` or `--chain-id`: Specify the chain ID (default is 137).
-- `-b` or `--max-block-look-back`: Specify the maximum block look-back (default is 3499).
-- `-p` or `--only-polymarket`: Specify if only Polymarket proposals should be considered (default is true).
+- `-m` or `--multiplier`: Specify the gas fee multiplier (default is 4).
+- `-r` or `--sort-remaining-time`: Specify if disputes should be sorted by remaining time to dispute (ascending) (default is true).
+- `-b` or `--sort-bond-size`: Specify if disputes should be sorted by bond size (descending) (default is false).
+- `-p` or `--only-polymarket`: Specify if only Polymarket proposals should be considered (default is false).
 
 ### Environment Variables
 
 The CLI uses the following environment variables:
 
-- `CHAIN_ID`: The chain ID (default is 137).
-- `MAX_BLOCK_LOOK_BACK`: The maximum block look-back (default is 3499).
-- `ONLY_POLYMARKET`: Specify if only Polymarket proposals should be considered (default is true).
-- `NODE_URL_137`: The node URL for Polygon Mumbai (default is `https://rpc.ankr.com/polygon_mumbai`).
+- `CHAIN_ID`: The chain ID. Required.
+- `MAX_BLOCK_LOOK_BACK`: The maximum block look-back (default is 3499). Optional.
+- `NODE_URL_{CHAIN_ID}`: The node URL for the chain ID. Required.
+- `PRIVATE_KEY`: The private key for the wallet. Required.
 
 ### Example Usage
 
-To dispute proposals on Polygon Mumbai (chain ID 137) with a maximum block look-back of 3499, you can run:
+To dispute proposals on Polygon Mainnet (chain ID 137) with only Polymarket proposals, you can run:
 
 ```bash
-CHAIN_ID=137 MAX_BLOCK_LOOK_BACK=3499 ONLY_POLYMARKET=true NODE_URL_137=https://rpc.ankr.com/polygon_mumbai yarn start
+CHAIN_ID=137 NODE_URL_137=<YOUR_NODE_URL> PRIVATE_KEY=<YOUR_PRIVATE_KEY> yarn dispute -p
 ```
-
-This command will start the CLI and dispute all proposals on Polygon Mumbai within the specified block range.
-
-## License
-
-This project is licensed under the MIT License.

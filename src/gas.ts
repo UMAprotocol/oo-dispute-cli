@@ -1,9 +1,11 @@
 import { BigNumber, ethers } from "ethers";
 
-export async function getGasFeeOverride(multiplier: string, provider: ethers.providers.Provider) {
+export async function getGasFeeOverride(multiplier: number, provider: ethers.providers.Provider) {
     const feeData = await provider.getFeeData();
-    const customPriorityFee = feeData.maxPriorityFeePerGas ? feeData.maxPriorityFeePerGas.mul(BigNumber.from(multiplier)) : BigNumber.from(0);
+    const maxFeePerGas = feeData.maxFeePerGas ? feeData.maxFeePerGas : BigNumber.from(0);
+    const maxPriorityFeePerGas = feeData.maxPriorityFeePerGas ? feeData.maxPriorityFeePerGas.mul(BigNumber.from(multiplier)) : BigNumber.from(0);
     return {
-        maxPriorityFeePerGas: feeData.lastBaseFeePerGas ? feeData.lastBaseFeePerGas.add(customPriorityFee) : BigNumber.from(0),
+        maxFeePerGas: maxFeePerGas.add(maxPriorityFeePerGas),
+        maxPriorityFeePerGas: maxPriorityFeePerGas,
     };
 }

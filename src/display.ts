@@ -1,14 +1,15 @@
 import { ethers } from "ethers";
-import { tryHexToUtf8String } from "./contracts";
-import { fetchWalletTokenBalance, Proposal } from "./proposals";
+import { fetchWalletTokenBalance, tryHexToUtf8String } from "./contracts";
+import { Proposal } from "./proposals";
+
 import { Config } from "./config";
 
 function formatExpiryTime(seconds: number): string {
   const minutes = Math.floor(seconds / 60);
   const hours = Math.floor(minutes / 60);
   const days = Math.floor(hours / 24);
-  const remainingMinutes = minutes % 60; // Calculate remaining minutes
-  const remainingSeconds = seconds % 60; // Calculate remaining seconds
+  const remainingMinutes = minutes % 60;
+  const remainingSeconds = seconds % 60;
 
   return `${days > 0 ? `${days} day(s), ` : ''}${hours > 0 ? `${hours % 24} hour(s), ` : ''}${remainingMinutes > 0 ? `${remainingMinutes} minute(s), ` : ''}${remainingSeconds} second(s)`.trim(); // Show all components
 }
