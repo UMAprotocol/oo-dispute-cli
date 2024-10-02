@@ -39,7 +39,7 @@ The CLI accepts the following arguments:
 
 - `-h` or `--help`: Display help information.
 - `-m` or `--multiplier`: Specify the gas fee multiplier (default is 4).
-- `-r` or `--sort-remaining-time`: Specify if disputes should be sorted by remaining time to dispute (ascending) (default is true).
+- `-r` or `--sort-remaining-time`: Specify if disputes should be sorted by remaining time to dispute (ascending) (default is false).
 - `-b` or `--sort-bond-size`: Specify if disputes should be sorted by bond size (descending) (default is false).
 - `-p` or `--only-polymarket`: Specify if only Polymarket proposals should be considered (default is false).
 
@@ -54,8 +54,8 @@ The CLI uses the following environment variables:
 
 ### Example Usage
 
-To dispute proposals on Polygon Mainnet (chain ID 137) with only Polymarket proposals, you can run:
+To dispute proposals on Polygon Mainnet (chain ID 137) with only Polymarket proposals sorted by remaining time to dispute (ascending), you can run:
 
 ```bash
-CHAIN_ID=137 NODE_URL_137=<YOUR_NODE_URL> PRIVATE_KEY=<YOUR_PRIVATE_KEY> yarn dispute -p
+CHAIN_ID=137 NODE_URL_137=<YOUR_NODE_URL> PRIVATE_KEY=<YOUR_PRIVATE_KEY> yarn dispute -p -r
 ```
