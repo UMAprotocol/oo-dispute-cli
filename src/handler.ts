@@ -11,6 +11,7 @@ export interface Options {
     onlyPolymarket: boolean;
     sortRemainingTime: boolean;
     sortBondSize: boolean;
+    sortRandom: boolean;
 }
 
 export async function handleCLI(options: Options) {
@@ -19,7 +20,14 @@ export async function handleCLI(options: Options) {
         output: process.stdout
     });
 
-    const config = await initConfig(process.env, options);
+    let config;
+    try {
+        config = await initConfig(process.env, options);
+    } catch (error) {
+        console.error(`🚨 Error initializing config: ${error}`);
+        rl.close();
+        return;
+    }
 
     const proposals = await fetchProposals(config);
 

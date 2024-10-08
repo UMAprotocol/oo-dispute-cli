@@ -82,6 +82,10 @@ export async function fetchProposals(config: Config): Promise<Proposal[]> {
         }));
 
     const sortedProposals = proposals.sort((a, b) => {
+        if (config.sortRandom) {
+            return Math.random() - 0.5;
+        }
+
         if (config.sortRemainingTime) {
             return a.proposalExpirationTimestamp.toNumber() - b.proposalExpirationTimestamp.toNumber();
         }
