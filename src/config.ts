@@ -2,6 +2,7 @@ import { getRetryProvider } from "@uma/common";
 import type { Provider } from "@ethersproject/abstract-provider";
 import { ethers } from "ethers";
 import { Options } from "./handler";
+import { POLYGON_BLOCKS_PER_HOUR } from "./constants";
 
 export interface Config {
     provider: Provider;
@@ -13,6 +14,7 @@ export interface Config {
     sortRemainingTime: boolean;
     sortRandom: boolean;
     sortBondSize: boolean;
+    blockLookbackPeriod: number;
 }
 
 export const initConfig = async (env: NodeJS.ProcessEnv, options: Options): Promise<Config> => {
@@ -36,6 +38,8 @@ export const initConfig = async (env: NodeJS.ProcessEnv, options: Options): Prom
 
     const sortRandom = options.sortRandom;
 
+    const blockLookbackPeriod = env.BLOCK_LOOKBACK_PERIOD ? Number(env.BLOCK_LOOKBACK_PERIOD) : POLYGON_BLOCKS_PER_HOUR * 24;
+
     if ((+sortRemainingTime) + (+sortBondSize) + (+sortRandom) > 1) {
         throw new Error("Only one sort option can be set");
     }
@@ -50,5 +54,6 @@ export const initConfig = async (env: NodeJS.ProcessEnv, options: Options): Prom
         sortRemainingTime,
         sortBondSize,
         sortRandom,
+        blockLookbackPeriod
     };
 };

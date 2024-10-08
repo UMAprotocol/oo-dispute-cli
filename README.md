@@ -42,7 +42,7 @@ The CLI accepts the following arguments:
 - `-t` or `--sort-remaining-time`: Specify if disputes should be sorted by remaining time to dispute (ascending) (default is false).
 - `-b` or `--sort-bond-size`: Specify if disputes should be sorted by bond size (descending) (default is false).
 - `-r` or `--sort-random`: Specify if disputes should be sorted randomly (default is false).
-- `-p` or `--only-polymarket`: Specify if only Polymarket proposals should be considered (default is false).
+- `-p` or `--only-polymarket`: Specify if only Polymarket proposals should be considered (default is false). It will only dispute proposals requested from the addresses in `POLYMARKET_REQUESTER_ADDRESSES` in `constants.ts`.
 
 > **Note:** Only one sort option can be applied. If no sort options are selected, the disputes will be sorted by age, from oldest to newest.
 
@@ -54,6 +54,7 @@ The CLI uses the following environment variables:
 - `MAX_BLOCK_LOOK_BACK`: The maximum block look-back (default is 3499). Optional.
 - `NODE_URL_{CHAIN_ID}`: The node URL for the chain ID. Required.
 - `PRIVATE_KEY`: The private key for the wallet. Required.
+- `BLOCK_LOOKBACK_PERIOD`: The block lookback period (default is POLYGON_BLOCKS_PER_HOUR \* 24). This is how many blocks to look back to find proposals to dispute. Optional.
 
 ### Example Usage
 

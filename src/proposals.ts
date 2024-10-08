@@ -26,8 +26,7 @@ export async function fetchProposals(config: Config): Promise<Proposal[]> {
     const currentBlockNumber = await config.provider.getBlockNumber();
     const block = await config.provider.getBlock(currentBlockNumber);
     const currentTimestamp = block.timestamp;
-    const oneDayInBlocks = POLYGON_BLOCKS_PER_HOUR * 24;
-    const startBlockNumber = currentBlockNumber - oneDayInBlocks;
+    const startBlockNumber = currentBlockNumber - config.blockLookbackPeriod;
 
     const searchConfig = {
         fromBlock: startBlockNumber,
