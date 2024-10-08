@@ -44,7 +44,7 @@ The CLI accepts the following arguments:
 - `-r` or `--sort-random`: Specify if disputes should be sorted randomly (default is false).
 - `-p` or `--only-polymarket`: Specify if only Polymarket proposals should be considered (default is false).
 
-> **Note:** Only one sort option can be set.
+> **Note:** Only one sort option can be applied. If no sort options are selected, the disputes will be sorted by age, from oldest to newest.
 
 ### Environment Variables
 
