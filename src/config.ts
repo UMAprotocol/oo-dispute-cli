@@ -11,6 +11,7 @@ export interface Config {
     wallet: ethers.Wallet;
     multiplier: number;
     sortRemainingTime: boolean;
+    sortRandom: boolean;
     sortBondSize: boolean;
 }
 
@@ -33,6 +34,12 @@ export const initConfig = async (env: NodeJS.ProcessEnv, options: Options): Prom
 
     const sortBondSize = options.sortBondSize;
 
+    const sortRandom = options.sortRandom;
+
+    if ((+sortRemainingTime) + (+sortBondSize) + (+sortRandom) > 1) {
+        throw new Error("Only one sort option can be set");
+    }
+
     return {
         provider,
         chainId,
@@ -42,5 +49,6 @@ export const initConfig = async (env: NodeJS.ProcessEnv, options: Options): Prom
         multiplier,
         sortRemainingTime,
         sortBondSize,
+        sortRandom,
     };
 };
