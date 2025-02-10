@@ -1,8 +1,8 @@
-# Mass Dispute CLI
+# Optimistic Oracle Dispute CLI Tool
 
 ## Overview
 
-The Mass Dispute CLI is a command-line tool designed to facilitate the efficient dispute of multiple UMA Optimistic Oracle proposals in the Optimistic Oracle V2 on the supported chains.
+The OO Dispute CLI is a command-line tool designed to facilitate the efficient dispute of multiple UMA Optimistic Oracle proposals in the Optimistic Oracle V2 on the supported chains.
 
 ## Prerequisites
 
