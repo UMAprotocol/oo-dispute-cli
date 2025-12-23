@@ -3,6 +3,7 @@ import type { Provider } from "@ethersproject/abstract-provider";
 import { ethers } from "ethers";
 import { Options } from "./handler";
 import { POLYGON_BLOCKS_PER_HOUR } from "./constants";
+import { getAddress } from "@uma/contracts-node";
 
 export interface Config {
     provider: Provider;
@@ -15,6 +16,7 @@ export interface Config {
     sortRandom: boolean;
     sortBondSize: boolean;
     blockLookbackPeriod: number;
+    ooContractAddress: string;
 }
 
 export const initConfig = async (env: NodeJS.ProcessEnv, options: Options): Promise<Config> => {
@@ -44,6 +46,17 @@ export const initConfig = async (env: NodeJS.ProcessEnv, options: Options): Prom
         throw new Error("Only one sort option can be set");
     }
 
+    let ooContractAddress: string;
+    if (env.CHAIN_ID === "137") {
+        ooContractAddress = options.managedOO ? "0x2C0367a9DB231dDeBd88a94b4f6461a6e47C58B1" : "0xeE3Afe347D5C74317041E2618C49534dAf887c24";
+    } else {
+        if (options.managedOO) {
+            throw new Error(`Managed OO is only supported on Polygon`);
+        }
+
+        ooContractAddress = await getAddress("OptimisticOracleV2", chainId);
+    }
+
     return {
         provider,
         chainId,
@@ -54,6 +67,7 @@ export const initConfig = async (env: NodeJS.ProcessEnv, options: Options): Prom
         sortRemainingTime,
         sortBondSize,
         sortRandom,
-        blockLookbackPeriod
+        blockLookbackPeriod,
+        ooContractAddress,
     };
 };

@@ -5,7 +5,7 @@ import { getGasFeeOverride } from "./gas";
 import { Proposal } from "./proposals";
 
 export async function disputeProposal(proposal: Proposal, config: Config) {
-    const oov2 = await getOOV2ContractInstance(config.provider);
+    const oov2 = await getOOV2ContractInstance(config.provider, config.ooContractAddress);
 
     const state = await oov2.getState(proposal.requester, proposal.identifier, proposal.timestamp, proposal.ancillaryData);
     if (state === RequestState.Disputed) {

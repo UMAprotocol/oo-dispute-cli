@@ -34,7 +34,7 @@ export async function fetchProposals(config: Config): Promise<Proposal[]> {
         maxBlockLookBack: config.maxBlockLookBack,
     };
 
-    const oo = await getOOV2ContractInstance(config.provider);
+    const oo = await getOOV2ContractInstance(config.provider, config.ooContractAddress);
 
     const proposeEvents = await paginatedEventQuery<ProposePriceEvent>(
         oo,

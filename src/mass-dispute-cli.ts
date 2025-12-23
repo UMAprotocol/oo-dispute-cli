@@ -11,6 +11,7 @@ program
     .option('-b, --sort-bond-size', 'Sort disputes by bond size (descending)', false)
     .option('-r, --sort-random', 'Sort disputes randomly', false)
     .option('-p, --only-polymarket', 'Only dispute proposals from Polymarket', false)
+    .option('-moo, --managed-oo', 'Use managed OO', false)
     .action(handleCLI);
 
 program.parse(process.argv);

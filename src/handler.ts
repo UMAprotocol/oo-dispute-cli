@@ -12,6 +12,7 @@ export interface Options {
     sortRemainingTime: boolean;
     sortBondSize: boolean;
     sortRandom: boolean;
+    managedOO: boolean;
 }
 
 export async function handleCLI(options: Options) {

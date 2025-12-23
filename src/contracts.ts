@@ -1,12 +1,10 @@
 import { Provider } from "@ethersproject/abstract-provider";
-import { ERC20Ethers, getAbi, getAddress, OptimisticOracleV2Ethers } from "@uma/contracts-node";
+import { ERC20Ethers, getAbi, OptimisticOracleV2Ethers } from "@uma/contracts-node";
 import { Contract, utils } from "ethers";
 import ERC20Abi from "./abi/erc20.json";
 import { Config } from "./config";
 
-export const getOOV2ContractInstance = async (provider: Provider): Promise<OptimisticOracleV2Ethers> => {
-  const networkId = (await provider.getNetwork()).chainId;
-  const contractAddress = (await getAddress("OptimisticOracleV2", networkId));
+export const getOOV2ContractInstance = async (provider: Provider, contractAddress: string): Promise<OptimisticOracleV2Ethers> => {
   const contractAbi = getAbi("OptimisticOracleV2");
   return new Contract(contractAddress, contractAbi, provider) as OptimisticOracleV2Ethers;
 };
