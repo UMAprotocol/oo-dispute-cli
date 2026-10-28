@@ -62,7 +62,7 @@ async function runApply(options: ApplyOptions, ask: (question: string) => Promis
     let sentBond = 0;
     const declined = new Set<string>();
 
-    console.log(`${config.dryRun ? "🧪 DRY RUN. " : ""}👛 ${config.wallet.address}; policy ${JSON.stringify(policy)}; ${options.watch ? `watching every ${options.interval}s` : "single pass"}.`);
+    console.log(`${config.dryRun ? "🧪 DRY RUN. " : ""}👛 ${config.wallet.address}; policy ${JSON.stringify(policy)}; ${options.watch ? `watching every ${options.interval}s, press Ctrl+C to stop` : "single pass"}.`);
 
     for (;;) {
         store.tryLock("apply", owner, Math.max(120, (intervalMs / 1000) * 3));
@@ -100,6 +100,7 @@ async function runApply(options: ApplyOptions, ask: (question: string) => Promis
             }
 
             if (approved && selected.length > 0) {
+                if (options.watch) console.log("");
                 if (!config.dryRun) selected.forEach((c) => store.setDispute(c.stored.id, "sending"));
                 const outcomes = await engine.dispute(selected.map((c) => c.stored.proposal));
                 const byProposal = new Map(selected.map((c) => [c.stored.proposal, c.stored.id]));
@@ -118,6 +119,7 @@ async function runApply(options: ApplyOptions, ask: (question: string) => Promis
         }
 
         if (!options.watch) break;
+        if (candidates.length > 0) console.log(`👀 Still watching for new dispute candidates every ${options.interval}s (Ctrl+C to stop).`);
         const progress = queue.progress();
         process.stdout.write(
             `\r⏳ ${new Date().toLocaleTimeString()} open ${progress.open_proposals}, pending ${progress.by_status.pending}, recheck ${progress.by_status.recheck}, ` +

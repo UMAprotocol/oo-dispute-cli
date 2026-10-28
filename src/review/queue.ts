@@ -109,7 +109,7 @@ export class ReviewQueue {
             for (const oracle of config.oracles) {
                 const key = `last_block:${oracle.address.toLowerCase()}`;
                 const stored = store.getMeta(key);
-                const fromBlock = stored ? Number(stored) + 1 : block.number - config.blockLookbackPeriod;
+                const fromBlock = stored ? Number(stored) + 1 : config.startBlock ?? block.number - config.blockLookbackPeriod;
                 if (fromBlock > block.number) continue;
                 const scan = await scanOracleRange(config, oracle, fromBlock, block.number, block.timestamp);
                 added += await this.ingest(scan.proposals);

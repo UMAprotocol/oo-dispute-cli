@@ -16,6 +16,8 @@ const RPC = process.env.FORK_RPC;
 if (!RPC) throw new Error("Set FORK_RPC to the local Polygon fork, e.g. FORK_RPC=http://127.0.0.1:8555");
 const OOV2 = "0xeE3Afe347D5C74317041E2618C49534dAf887c24";
 const MANAGED_OOV2 = "0x2C0367a9DB231dDeBd88a94b4f6461a6e47C58B1";
+// Polymarket UMA CTF adapter (in POLYMARKET_REQUESTER_ADDRESSES) used as the requester in scenario mode.
+const POLYMARKET_ADAPTER = "0x2F5e3684cb1F318ec51b00Edba38d79Ac2c0aA9d";
 const USDCE = "0x2791Bca1f2de4661ED88A30C99A7a9449Aa84174";
 const IDENTIFIER = ethers.utils.formatBytes32String("YES_OR_NO_QUERY");
 const MNEMONIC = "test test test test test test test test test test test junk";
@@ -122,7 +124,14 @@ async function scenario(statePath) {
     }
     const oo = new ethers.Contract(OOV2, getAbi("OptimisticOracleV2"), provider);
     await fundUsdc(proposer.address, ethers.utils.parseUnits("1000000", 6));
+    await fundUsdc(disputer.address, ethers.utils.parseUnits("100000", 6));
     await (await new ethers.Contract(USDCE, ERC20, proposer).approve(OOV2, ethers.constants.MaxUint256)).wait();
+
+    // Requests come from a real Polymarket CTF adapter (impersonated), so the CLI's --only-polymarket filter keeps them.
+    await provider.send("anvil_impersonateAccount", [POLYMARKET_ADAPTER]);
+    await provider.send("anvil_setBalance", [POLYMARKET_ADAPTER, ethers.utils.hexValue(ethers.constants.WeiPerEther)]);
+    const asRequester = oo.connect(provider.getSigner(POLYMARKET_ADAPTER));
+
     const now = (await provider.getBlock("latest")).timestamp;
     const initializer = requesterA.address.slice(2).toLowerCase();
     const requests = [];
@@ -130,18 +139,23 @@ async function scenario(statePath) {
         const text = `q: title: ${market.title}, description: ${market.description} market_id: ${900000 + i} res_data: p1: 0, p2: 1, p3: 0.5. Where p1 corresponds to No, p2 to Yes, p3 to unknown/50-50. Updates made by the question creator via the bulletin board at 0x65070BE91477460D8A7AeEb94ef92fe056C2f2A7 as described by https://polygonscan.com/tx/0x0 should be considered.,initializer:${initializer}`;
         const ancillaryData = ethers.utils.hexlify(ethers.utils.toUtf8Bytes(text));
         const timestamp = now - 2000 - i;
-        const asRequester = oo.connect(requesterA);
         await (await asRequester.requestPrice(IDENTIFIER, timestamp, ancillaryData, USDCE, 0)).wait();
         await (await asRequester.setBond(IDENTIFIER, timestamp, ancillaryData, ethers.utils.parseUnits("10", 6))).wait();
         await (await asRequester.setCustomLiveness(IDENTIFIER, timestamp, ancillaryData, 7200)).wait();
         const price = market.proposed === "yes" ? ethers.constants.WeiPerEther : 0;
-        await (await oo.connect(proposer).proposePrice(requesterA.address, IDENTIFIER, timestamp, ancillaryData, price)).wait();
-        requests.push({ requester: requesterA.address, timestamp, ancillaryData, title: market.title, proposed: market.proposed, expect: market.expect });
+        await (await oo.connect(proposer).proposePrice(POLYMARKET_ADAPTER, IDENTIFIER, timestamp, ancillaryData, price)).wait();
+        requests.push({ requester: POLYMARKET_ADAPTER, timestamp, ancillaryData, title: market.title, proposed: market.proposed, expect: market.expect });
     }
-    fs.writeFileSync(statePath, JSON.stringify({ oracle: OOV2, requests, rival: rival.address, disputer: disputer.address }, null, 2));
+    await provider.send("anvil_stopImpersonatingAccount", [POLYMARKET_ADAPTER]);
+
+    const artifact = JSON.parse(fs.readFileSync(`${__dirname}/fixtures/DisputeBatcher.json`, "utf8"));
+    const batcher = await (await new ethers.ContractFactory(artifact.abi, artifact.bytecode, deployer).deploy(OOV2)).deployed();
+
+    fs.writeFileSync(statePath, JSON.stringify({ oracle: OOV2, requests, rival: rival.address, disputer: disputer.address, batcher: batcher.address }, null, 2));
     const wrong = SCENARIO.filter((m) => (m.proposed === "yes" ? "p2" : "p1") !== m.expect).length;
-    console.log(`Created ${requests.length} scenario proposals (${wrong} wrong).`);
-    console.log(`CHAIN_ID=137 NODE_URL_137=${RPC} PRIVATE_KEY=${disputer.privateKey}`);
+    console.log(`Created ${requests.length} scenario proposals (${wrong} wrong); DisputeBatcher ${batcher.address}.`);
+    console.log(`DISPUTER_PRIVATE_KEY=${disputer.privateKey}`);
+    console.log(`DISPUTE_BATCHER_ADDRESS=${batcher.address}`);
 }
 
 async function check(statePath) {

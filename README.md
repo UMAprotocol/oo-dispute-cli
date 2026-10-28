@@ -139,6 +139,24 @@ send without asking within those limits. Only one `apply` can run per review dat
 
 ## Fork rehearsal
 
+The quickest way to try everything locally:
+
+```bash
+yarn fork:up      # anvil Polygon fork, 11 Polymarket-style test proposals (5 wrong), DisputeBatcher, config files
+yarn fork:status  # who disputed what so far
+yarn fork:down    # stop the fork and remove its config
+```
+
+`fork:up` writes `.oo-dispute/mcp.env`, so the `oo-dispute` MCP server in `.mcp.json` points at the fork, and
+`.oo-dispute/fork/apply.env` for `source .oo-dispute/fork/apply.env && yarn apply --watch`. It needs Foundry's
+`anvil`; set `FORK_URL` for a different Polygon archive RPC and `FORK_PORT` if 8555 is taken.
+
+The MCP server reads `.oo-dispute/mcp.env` (or `OO_DISPUTE_ENV_FILE`) at startup, which also helps on a real
+incident when agents are launched from a desktop app without your shell variables. It never loads `PRIVATE_KEY`.
+`START_BLOCK` sets where a fresh review queue starts scanning.
+
+The building blocks:
+
 `scripts/fork-rehearsal.js` creates test proposals on a local Polygon fork, so you can run the whole flow end to end without touching mainnet. It uses anvil's well-known test accounts and refuses to run unless the RPC it is given has the real Polygon contracts.
 
 ```bash

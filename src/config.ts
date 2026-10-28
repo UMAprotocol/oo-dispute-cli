@@ -33,6 +33,8 @@ export interface Config {
     minPriorityFeeGwei: number;
     sort: SortOrder;
     blockLookbackPeriod: number;
+    // First block the review queue scans on a fresh database (instead of the lookback period).
+    startBlock?: number;
     oracles: OracleConfig[];
     disputeBatcherAddress?: string;
     batch: boolean;
@@ -105,6 +107,7 @@ export const initConfig = async (env: NodeJS.ProcessEnv, options: Options, { rea
         minPriorityFeeGwei: parseNumber("MIN_PRIORITY_FEE_GWEI", env.MIN_PRIORITY_FEE_GWEI, MIN_PRIORITY_FEE_GWEI[chainId] ?? DEFAULT_MIN_PRIORITY_FEE_GWEI),
         sort: resolveSort(options),
         blockLookbackPeriod: parseNumber("BLOCK_LOOKBACK_PERIOD", env.BLOCK_LOOKBACK_PERIOD, POLYGON_BLOCKS_PER_HOUR * 24, { integer: true, min: 1 }),
+        startBlock: env.START_BLOCK ? parseNumber("START_BLOCK", env.START_BLOCK, 0, { integer: true, min: 0 }) : undefined,
         oracles: await resolveOracles(chainId, options),
         disputeBatcherAddress,
         batch: options.batch,

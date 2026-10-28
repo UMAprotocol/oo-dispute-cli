@@ -8,7 +8,10 @@
     "dispute": "node dist/mass-dispute-cli.js dispute",
     "test": "tsc && node --test \"dist/**/*.test.js\"",
     "apply": "node dist/mass-dispute-cli.js apply",
-    "mcp": "node dist/mcp-entry.js"
+    "mcp": "node dist/mcp-entry.js",
+    "fork:up": "scripts/fork-env.sh up",
+    "fork:down": "scripts/fork-env.sh down",
+    "fork:status": "scripts/fork-env.sh status"
   },
   "keywords": [],
   "author": "",
