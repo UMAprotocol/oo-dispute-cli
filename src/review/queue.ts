@@ -23,6 +23,10 @@ import { GroupRow, now, ProposalContext, ReviewStore, StoredProposal } from "./s
 // Proposals with less time left than this are not handed out: a review would not finish in time.
 const MIN_SECONDS_LEFT_TO_REVIEW = 120;
 const MARKET_DATA_MAX_AGE_SECONDS = 300;
+// A batch is one tool result. MCP clients cap those (Claude Code at about 50 KB) and spill larger ones to a file a
+// reviewer may not be able to read, which strands the claims it holds. Each proposal is about 3 KB.
+const MAX_BATCH_CHARS = 30_000;
+const MAX_OTHER_MARKETS = 40;
 
 export interface QueueOptions {
     policy: ReviewPolicy;
@@ -49,11 +53,38 @@ export function proposalId(key: RequestKey): string {
     return `p_${sha(requestKeyId(key))}`;
 }
 
+// The Polymarket event is the best key: all lines of one match share it, and two matches built from the same market
+// template (identical rules text) never do. Identical rules text is only a fallback when the event is unknown.
 export function groupFor(id: string, parsed: ParsedAncillary, market: MarketData): GroupRow {
     const label = parsed.title ?? market.question ?? id.slice(0, 20);
     if (market.negRiskMarketId) return { groupKey: `negrisk:${market.negRiskMarketId}`, label, exclusive: true, source: "negrisk" };
+    if (market.eventId) return { groupKey: `event:${market.eventId}`, label: market.eventTitle ?? label, exclusive: false, source: "event" };
     if (parsed.description) return { groupKey: `desc:${sha(parsed.description)}`, label, exclusive: false, source: "description" };
     return { groupKey: `single:${sha(id)}`, label, exclusive: false, source: "single" };
+}
+
+type GroupView = Awaited<ReturnType<ReviewQueue["groupView"]>>;
+
+// Drops the least urgent proposals from a view until it fits in maxChars (always keeping one); returns its size.
+function fitView(view: GroupView, maxChars: number): number {
+    const size = (value: unknown) => JSON.stringify(value, null, 1).length;
+    let used = size({ ...view, proposals: [] });
+    let keep = 0;
+    for (const proposal of view.proposals) {
+        const next = size(proposal) + view.proposals.length; // + nesting indentation, roughly
+        if (keep > 0 && used + next > maxChars) break;
+        used += next;
+        keep++;
+    }
+    if (keep < view.proposals.length) {
+        const dropped = view.proposals.slice(keep);
+        view.not_shown_needing_review += dropped.length;
+        view.proposals = view.proposals.slice(0, keep);
+        const compact = dropped.map((p) => ({ proposal_id: p.proposal_id, title: p.title, proposed: p.proposed.meaning, status: p.status }));
+        view.other_markets = [...compact, ...view.other_markets];
+        used += size(compact);
+    }
+    return used;
 }
 
 // Cheap deterministic signals, computed for every proposal before any model looks at it.
@@ -176,10 +207,12 @@ export class ReviewQueue {
                 group.minExpiry = Math.min(group.minExpiry, sp.proposal.proposalExpirationTimestamp.toNumber());
                 groups.set(sp.groupKey, group);
             }
+            // A group bigger than maxProposals is still claimed whole and served in parts: the claim stays with the agent
+            // until every member is reviewed, and the next call returns the rest.
             const picked: string[] = [];
             let proposals = 0;
             for (const [key, group] of [...groups].sort((a, b) => a[1].minExpiry - b[1].minExpiry)) {
-                if (picked.length >= maxGroups || (picked.length > 0 && proposals + group.count > maxProposals)) break;
+                if (picked.length >= maxGroups || proposals >= maxProposals) break;
                 picked.push(key);
                 proposals += group.count;
                 this.store.claim(key, agent, atTime + this.options.leaseSeconds);
@@ -187,14 +220,29 @@ export class ReviewQueue {
             return picked;
         });
 
-        const groups = [];
-        for (const key of claimed) groups.push(await this.groupView(key, agent));
+        const groups: GroupView[] = [];
+        let chars = 0;
+        let budget = maxProposals;
+        for (const key of claimed) {
+            const view = budget > 0 && chars < MAX_BATCH_CHARS ? await this.groupView(key, agent, budget) : undefined;
+            const viewChars = view ? fitView(view, MAX_BATCH_CHARS - chars) : 0;
+            if (!view || view.proposals.length === 0 || (groups.length > 0 && chars + viewChars > MAX_BATCH_CHARS)) {
+                this.store.releaseClaim(key, agent); // claimed but not shown: give it back now, not after the lease
+                continue;
+            }
+            groups.push(view);
+            chars += viewChars;
+            budget -= view.proposals.length;
+        }
         return {
             agent,
             lease_seconds: this.options.leaseSeconds,
             groups,
             queue: this.progress(),
             ...(groups.length === 0 ? { note: "Nothing needs review right now. Call next_batch again later; unclear verdicts come back when their re-check time passes." } : {}),
+        ...(groups.some((g) => g.not_shown_needing_review > 0)
+            ? { split_groups: "Some groups were too large for one batch. Submit what you have; the claim stays yours and next_batch returns the rest." }
+            : {}),
         };
     }
 
@@ -209,6 +257,8 @@ export class ReviewQueue {
             }
             if (now() - context.market.fetchedAt > MARKET_DATA_MAX_AGE_SECONDS) {
                 const market = await this.marketData(sp.proposal);
+                market.eventId ??= context.market.eventId;
+                market.eventTitle ??= context.market.eventTitle;
                 if (market.status === "available" || context.market.status !== "available") context.market = market;
                 changed = true;
             }
@@ -216,20 +266,37 @@ export class ReviewQueue {
         });
     }
 
-    async groupView(groupKey: string, agent: string) {
+    // Full detail for up to `limit` members the agent still has to review (most urgent first); the rest of the group
+    // is listed compactly in other_markets for context.
+    async groupView(groupKey: string, agent: string, limit = Infinity) {
         const atTime = now();
         const group = this.store.getGroup(groupKey);
-        const members = this.store.groupProposals(groupKey).filter((sp) => sp.status === "open" && sp.proposal.proposalExpirationTimestamp.toNumber() > atTime);
-        await this.ensureContext(members);
-        const fresh = this.store.groupProposals(groupKey).filter((sp) => members.some((m) => m.id === sp.id));
-        const evaluations = this.evaluations(fresh);
+        const open = this.store.groupProposals(groupKey).filter((sp) => sp.status === "open" && sp.proposal.proposalExpirationTimestamp.toNumber() > atTime);
+        const evaluations = this.evaluations(open);
+        const pending = open.filter((sp) => needsReview(evaluations.get(sp.id)!, agent, atTime));
+        const shown = new Set(pending.slice(0, limit).map((sp) => sp.id));
+        await this.ensureContext(open.filter((sp) => shown.has(sp.id)));
+        const fresh = new Map(this.store.groupProposals(groupKey).map((sp) => [sp.id, sp]));
+        const members = open.map((sp) => fresh.get(sp.id) ?? sp);
+        const others = members.filter((sp) => !shown.has(sp.id));
         const proposerCounts = this.store.proposerCounts();
         return {
             group_key: groupKey,
             label: group?.label,
             grouping: group?.source,
+            ...(group?.source === "description"
+                ? { grouping_note: "Grouped only because the rules text is identical. These may be different events built from one template: check each market's title." }
+                : {}),
             mutually_exclusive: group?.exclusive ?? false,
-            proposals: fresh.map((sp) => this.proposalView(sp, group, fresh, evaluations.get(sp.id)!, proposerCounts, atTime, agent)),
+            proposals: members.filter((sp) => shown.has(sp.id)).map((sp) => this.proposalView(sp, group, members, evaluations.get(sp.id)!, proposerCounts, atTime, agent)),
+            not_shown_needing_review: pending.length - shown.size,
+            other_markets: others.slice(0, MAX_OTHER_MARKETS).map((sp) => ({
+                proposal_id: sp.id,
+                title: sp.context.parsed.title,
+                proposed: describePrice(sp.proposal.proposedPrice, sp.context.parsed),
+                status: evaluations.get(sp.id)!.action,
+            })),
+            ...(others.length > MAX_OTHER_MARKETS ? { other_markets_omitted: others.length - MAX_OTHER_MARKETS } : {}),
         };
     }
 
@@ -303,12 +370,15 @@ export class ReviewQueue {
                 }
             }
 
+            const { minConfidence } = this.options.policy;
+            const earlier = this.store.decisionsByProposal(verdicts.map((v) => v.proposal_id));
             const reviewId = this.store.insertReview(groupKey, agent, summary, evidence);
             const results = verdicts.map((v) => {
                 const sp = members.get(v.proposal_id)!;
                 const expiration = sp.proposal.proposalExpirationTimestamp.toNumber();
-                const decisive = v.verdict !== "unclear" && v.confidence >= this.options.policy.minConfidence;
-                const recheckAfter = decisive ? undefined : recheckTime(atTime, expiration);
+                const decisive = v.verdict !== "unclear" && v.confidence >= minConfidence;
+                const inconclusive = (earlier.get(v.proposal_id) ?? []).filter((d) => d.verdict === "unclear" || d.confidence < minConfidence).length;
+                const recheckAfter = decisive ? undefined : recheckTime(atTime, expiration, inconclusive);
                 const price = v.verdict === "unclear" ? undefined : verdictPrice(v.verdict, sp.context.parsed).toString();
                 this.store.insertDecision(reviewId, v.proposal_id, agent, v.verdict, price, v.confidence, v.reasoning, recheckAfter);
                 const evaluation = this.evaluations([sp]).get(sp.id)!;

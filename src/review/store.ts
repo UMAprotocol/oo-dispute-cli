@@ -28,7 +28,7 @@ export interface GroupRow {
     groupKey: string;
     label: string;
     exclusive: boolean;
-    source: "negrisk" | "description" | "single" | "manual";
+    source: "negrisk" | "event" | "description" | "single" | "manual";
 }
 
 export interface DisputeRow {
@@ -227,6 +227,15 @@ export class ReviewStore {
 
     releaseClaim(groupKey: string, agent: string): boolean {
         return Number(this.db.prepare("DELETE FROM claims WHERE group_key = ? AND agent = ?").run(groupKey, agent).changes) > 0;
+    }
+
+    // Every group an agent holds, e.g. when it stops early or never saw what a batch claimed.
+    releaseAgentClaims(agent: string): string[] {
+        return this.transaction(() => {
+            const keys = (this.db.prepare("SELECT group_key FROM claims WHERE agent = ?").all(agent) as { group_key: string }[]).map((r) => r.group_key);
+            this.db.prepare("DELETE FROM claims WHERE agent = ?").run(agent);
+            return keys;
+        });
     }
 
     decisionsByProposal(ids?: string[]): Map<string, DecisionRecord[]> {

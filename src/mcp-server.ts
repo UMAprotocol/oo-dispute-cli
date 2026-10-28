@@ -81,7 +81,7 @@ export async function startMcpServer(argv: string[]) {
                 "Claim the most urgent groups of proposals that need review (one group = one real-world event) and get everything needed to review them. Claims expire after the lease; submit or release them.",
             inputSchema: {
                 agent: agentName,
-                max_proposals: z.number().int().min(1).max(50).default(20).describe("Soft cap on proposals returned"),
+                max_proposals: z.number().int().min(1).max(25).default(10).describe("Most proposals returned. Larger groups are served across several calls"),
                 max_groups: z.number().int().min(1).max(10).default(3),
             },
         },
@@ -118,8 +118,12 @@ export async function startMcpServer(argv: string[]) {
     registerTool(
         server,
         "release_claim",
-        { description: "Give a claimed group back to the queue without reviewing it.", inputSchema: { agent: agentName, group_key: z.string() } },
-        ({ agent, group_key }) => respond(() => ({ released: queue.store.releaseClaim(group_key, agent) }))
+        {
+            description: "Give a claimed group back to the queue without reviewing it. Omit group_key to release every group you hold (do this before you stop).",
+            inputSchema: { agent: agentName, group_key: z.string().optional() },
+        },
+        ({ agent, group_key }) =>
+            respond(() => (group_key ? { released: queue.store.releaseClaim(group_key, agent) } : { released_groups: queue.store.releaseAgentClaims(agent) }))
     );
 
     registerTool(

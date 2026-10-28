@@ -97,14 +97,40 @@ export interface MarketData {
     negRiskMarketId?: string;
     closed?: boolean;
     prices?: { outcome: string; price: number }[];
+    // The Polymarket event the market belongs to: every line of one match (winner, spreads, totals) shares it.
+    eventId?: string;
+    eventTitle?: string;
     fetchedAt: number;
     error?: string;
 }
 
 const CLOB_BASE_URL = process.env.POLYMARKET_CLOB_URL || "https://clob.polymarket.com";
+const GAMMA_BASE_URL = process.env.POLYMARKET_GAMMA_URL || "https://gamma-api.polymarket.com";
 
-// Best effort: Polymarket's public CLOB market endpoint, no key. Any failure is reported as unavailable.
+// Best effort: Polymarket's public CLOB market endpoint plus the market's event from Gamma, no key. Any CLOB failure
+// is reported as unavailable; a missing event only leaves eventId unset.
 export async function fetchMarketData(condition: string, timeoutMs = 3000): Promise<MarketData> {
+    const [market, event] = await Promise.all([fetchClobMarket(condition, timeoutMs), fetchEvent(condition, timeoutMs)]);
+    return event ? { ...market, eventId: event.id, eventTitle: event.title } : market;
+}
+
+// Gamma hides closed markets unless asked, and trading usually closes before the proposal, so both are queried.
+export async function fetchEvent(condition: string, timeoutMs = 3000): Promise<{ id: string; title?: string } | undefined> {
+    const lookups = await Promise.allSettled(
+        ["false", "true"].map(async (closed) => {
+            const response = await fetch(`${GAMMA_BASE_URL}/markets?condition_ids=${condition}&closed=${closed}`, { signal: AbortSignal.timeout(timeoutMs) });
+            if (!response.ok) return undefined;
+            const markets = (await response.json()) as { events?: { id?: string | number; title?: string }[] }[];
+            return markets[0]?.events?.[0];
+        })
+    );
+    for (const lookup of lookups) {
+        if (lookup.status === "fulfilled" && lookup.value?.id !== undefined) return { id: String(lookup.value.id), title: lookup.value.title };
+    }
+    return undefined;
+}
+
+async function fetchClobMarket(condition: string, timeoutMs: number): Promise<MarketData> {
     const fetchedAt = Math.floor(Date.now() / 1000);
     try {
         const response = await fetch(`${CLOB_BASE_URL}/markets/${condition}`, { signal: AbortSignal.timeout(timeoutMs) });

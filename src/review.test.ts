@@ -55,11 +55,23 @@ test("evaluate: agreement, unclear, low confidence and confirmations", () => {
     assert.equal(evaluate([d("a", "p1", 0.9, 1, "0"), d("a", "p1", 0.95, 2, "0")], proposed, policy).action, "needs_confirmation");
 });
 
-test("recheckTime spreads re-checks over liveness and stays before expiry", () => {
-    assert.equal(recheckTime(0, 600), 60);
+test("recheckTime spreads re-checks over liveness, backs off after inconclusive looks, and stays before expiry", () => {
+    assert.equal(recheckTime(0, 600), 300);
     assert.equal(recheckTime(0, 7200), 1800);
     assert.equal(recheckTime(0, 1800), 600);
     assert.ok(recheckTime(0, 1500) <= 1500 - 600);
+    assert.equal(recheckTime(0, 7200, 1), 3600);
+    assert.equal(recheckTime(0, 7200, 3), 7200 - 600, "backoff never skips the last look before expiry");
+    assert.equal(recheckTime(0, 86_400, 9), 7200, "capped at two hours");
+});
+
+test("groupFor prefers the Polymarket event over identical rules text", () => {
+    const parsed = parseAncillary(hex(ANCILLARY));
+    const market = (extra: object) => ({ status: "available" as const, fetchedAt: 0, ...extra });
+    assert.equal(groupFor("a", parsed, market({ eventId: "1" })).groupKey, "event:1");
+    assert.notEqual(groupFor("a", parsed, market({ eventId: "1" })).groupKey, groupFor("b", parsed, market({ eventId: "2" })).groupKey, "same template, different matches");
+    assert.equal(groupFor("a", parsed, market({ eventId: "1", negRiskMarketId: "0xn" })).groupKey, "negrisk:0xn");
+    assert.equal(groupFor("a", parsed, market({})).source, "description");
 });
 
 // ---- queue (in-memory store, no chain) ----
@@ -156,6 +168,50 @@ test("unclear verdicts come back after their re-check time; confirmations need a
     const confirm = (await queue.nextBatch("r2", 20, 1)).groups[0];
     queue.submitReview("r2", confirm.group_key, "Spain won", [], [{ proposal_id: id, verdict: "p2", confidence: 0.9, seen_proposed_price: "0", reasoning: "UEFA" }]);
     assert.equal(queue.candidates().length, 1);
+});
+
+test("a large group is served in parts that fit one tool result, and the claim stays with its reviewer", async () => {
+    const { queue, add } = setupQueue();
+    const rules = "Spread and totals market for FC Isloch vs Maxline Vitebsk. " + "Resolves on the official final score. ".repeat(70);
+    for (let i = 0; i < 30; i++) add(makeProposal(`Isloch vs Vitebsk: O/U ${i}.5`, rules, BigNumber.from(0), 100 + i));
+
+    const first = await queue.nextBatch("r1", 25, 3);
+    assert.equal(first.groups.length, 1);
+    const group = first.groups[0];
+    assert.ok(JSON.stringify(first, null, 1).length < 50_000, "fits under the MCP client's result limit");
+    assert.ok(group.proposals.length >= 1 && group.proposals.length < 30);
+    assert.equal(group.proposals.length + group.not_shown_needing_review, 30);
+    assert.equal(group.other_markets.length, 30 - group.proposals.length);
+    assert.equal((await queue.nextBatch("r2", 25, 3)).groups.length, 0, "the whole group stays claimed");
+
+    const verdicts = group.proposals.map((p) => ({ proposal_id: p.proposal_id, verdict: "p1" as const, confidence: 0.9, seen_proposed_price: "0", reasoning: "1-0" }));
+    assert.equal(queue.submitReview("r1", group.group_key, "1-0", [], verdicts).claim_released, false);
+    const rest = (await queue.nextBatch("r1", 10, 3)).groups[0];
+    assert.equal(rest.group_key, group.group_key);
+    assert.ok(rest.proposals.every((p) => !verdicts.some((v) => v.proposal_id === p.proposal_id)), "only markets still needing review");
+    assert.ok(rest.proposals.length <= 10, "max_proposals is a hard cap");
+});
+
+test("release_claim without a group gives back everything the agent holds", async () => {
+    const { queue, store, add } = setupQueue();
+    add(makeProposal("Did Spain win Euro 2024?", "Resolves Yes if Spain won.", BigNumber.from(0), 9));
+    add(makeProposal("Did France win Euro 2024?", "Resolves Yes if France won.", BigNumber.from(0), 10));
+    assert.equal((await queue.nextBatch("r1", 20, 5)).groups.length, 2);
+    assert.equal(store.releaseAgentClaims("r1").length, 2);
+    assert.equal((await queue.nextBatch("r2", 20, 5)).groups.length, 2);
+});
+
+test("repeated unclear verdicts push the re-check further out", async () => {
+    const { queue, store, add } = setupQueue();
+    const id = add(makeProposal("Did Spain win Euro 2024?", "Resolves Yes if Spain won.", BigNumber.from(0), 9, 6 * 3600));
+    const unclear = [{ proposal_id: id, verdict: "unclear" as const, confidence: 0.4, seen_proposed_price: "0", reasoning: "no result" }];
+    const g = (await queue.nextBatch("r1", 20, 1)).groups[0];
+    const first = queue.submitReview("r1", g.group_key, "?", [], unclear).results[0].recheck_in_minutes!;
+    store.db.prepare("UPDATE decisions SET recheck_after = ?").run(now() - 1);
+    const again = (await queue.nextBatch("r2", 20, 1)).groups[0];
+    const second = queue.submitReview("r2", again.group_key, "?", [], unclear).results[0].recheck_in_minutes!;
+    assert.equal(first, 30);
+    assert.equal(second, 60);
 });
 
 test("expired leases return work to the queue", async () => {

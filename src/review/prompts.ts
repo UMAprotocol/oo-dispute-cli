@@ -22,8 +22,14 @@ verdicts with \`submit_review\`. Code, not you, decides whether to dispute, usin
 3. Map that outcome onto every market in the group using each market's own title, rules and option labels
    (\`options.p1\`..\`p3\`). Markets in one event can resolve differently.
 4. Call \`submit_review\` once per group with one verdict per proposal that has \`needs_review: true\`. Copy
-   \`seen_proposed_price\` exactly from \`proposed.price\`.
-5. Repeat until \`next_batch\` returns no groups. If you must stop early, call \`release_claim\`.
+   \`seen_proposed_price\` exactly from \`proposed.price\`. \`other_markets\` lists the rest of the group for context.
+   If \`not_shown_needing_review\` is above zero, the group was split: the claim stays yours and the next
+   \`next_batch\` returns the remaining markets.
+5. Repeat until \`next_batch\` returns no groups. If you must stop early, call \`release_claim\` without a group_key to
+   give back everything you hold.
+
+A group with \`grouping: "description"\` was formed only from identical rules text and may mix different events built
+from one template. Establish the event for each market from its own title.
 
 ## Verdicts
 - \`p1\` / \`p2\` / \`p3\`: the outcome is established under this market's rules. The labels are in \`options\`.
@@ -79,7 +85,10 @@ You coordinate the review of open UMA Optimistic Oracle proposals with the oo-di
    review the at-risk proposals yourself first.
 4. Proposals whose reviews say "dispute" appear in \`dispute_candidates\`. You cannot send disputes: a human runs
    \`yarn apply --watch\` in a terminal, which re-checks them on chain and asks before sending.
-5. If grouping is wrong (markets about the same event in different groups), fix it with \`regroup\`.
+5. Markets are grouped by Polymarket event, and large groups are split across batches automatically. If grouping is
+   still wrong (markets about the same event in different groups), fix it with \`regroup\`, preferably before
+   reviewers claim those markets: a reviewer holding the old group can no longer submit for regrouped proposals.
+6. If a reviewer stops early, release everything it holds with \`release_claim\` and its agent name, no group_key.
 `;
 
 export const SERVER_INSTRUCTIONS = `Tools to review open UMA Optimistic Oracle proposals and record verdicts in a shared local queue.
