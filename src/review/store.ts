@@ -1,4 +1,4 @@
-import { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync } from "node:sqlite";
 import { mkdirSync } from "fs";
 import { dirname } from "path";
 import { BigNumber } from "ethers";
@@ -53,12 +53,24 @@ function deserializeProposal(json: string): Proposal {
 
 export const now = () => Math.floor(Date.now() / 1000);
 
+// Required lazily so the error is explicit on Node versions without (unflagged) node:sqlite.
+function openDatabase(path: string): DatabaseSync {
+    let sqlite: typeof import("node:sqlite");
+    try {
+        // eslint-disable-next-line @typescript-eslint/no-var-requires
+        sqlite = require("node:sqlite");
+    } catch {
+        throw new Error(`The review queue (yarn mcp / yarn apply) needs Node 22.13 or later; this is ${process.version}. yarn dispute works on older versions.`);
+    }
+    return new sqlite.DatabaseSync(path);
+}
+
 export class ReviewStore {
     readonly db: DatabaseSync;
 
     constructor(path: string) {
         if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
-        this.db = new DatabaseSync(path);
+        this.db = openDatabase(path);
         // busy_timeout must come first: several processes may open a fresh database at the same moment.
         this.db.exec(`
             PRAGMA busy_timeout = 10000;

@@ -30,8 +30,5 @@
     "@types/bluebird": "^3.5.42",
     "@types/node": "^22.7.0",
     "hardhat": "^2.22.12"
-  },
-  "engines": {
-    "node": ">=22.13"
   }
 }

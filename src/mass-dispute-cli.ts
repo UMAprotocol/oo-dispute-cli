@@ -1,5 +1,4 @@
 import { Command } from 'commander';
-import { handleApply } from './apply';
 import { handleCLI } from './handler';
 
 const program = new Command();
@@ -38,6 +37,7 @@ program
     .option('--db <path>', 'Review database (default .oo-dispute/review-<chain>.sqlite)')
     .option('--min-confidence <n>', 'Confidence a disagreement needs to become a dispute')
     .option('--confirmations <n>', 'Independent reviewers that must agree before disputing')
-    .action((options) => handleApply({ ...options, sortRemainingTime: true, sortBondSize: false, sortRandom: false, sortAge: false, managedOo: false, flushBefore: '10' }));
+    // Loaded on demand: the review queue needs node:sqlite (Node 22.13+), and `dispute` must keep working on older Node.
+    .action(async (options) => (await import('./apply')).handleApply({ ...options, sortRemainingTime: true, sortBondSize: false, sortRandom: false, sortAge: false, managedOo: false, flushBefore: '10' }));
 
 program.parse(process.argv);

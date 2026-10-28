@@ -14,7 +14,8 @@ Before sending, every dispute is re-checked against live chain state and simulat
 
 ## Prerequisites
 
-- Node.js (version 22.13 or higher; the review queue uses the built-in `node:sqlite`)
+- Node.js 18 or higher for `yarn dispute`. The agent review queue (`yarn mcp`, `yarn apply`) needs 22.13 or higher,
+  because it uses the built-in `node:sqlite`.
 - yarn (version 1.22.19 or higher)
 
 ## Installation
