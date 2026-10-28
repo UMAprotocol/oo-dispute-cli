@@ -6,22 +6,29 @@
   "scripts": {
     "build": "tsc",
     "dispute": "node dist/mass-dispute-cli.js dispute",
-    "test": "tsc && node --test \"dist/**/*.test.js\""
+    "test": "tsc && node --test \"dist/**/*.test.js\"",
+    "apply": "node dist/mass-dispute-cli.js apply",
+    "mcp": "node dist/mcp-entry.js"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
     "@uma/common": "^2.37.1",
     "@uma/contracts-node": "^0.4.23",
     "commander": "^12.1.0",
     "ethers": "^5",
-    "typescript": "^5.6.2"
+    "typescript": "^5.6.2",
+    "zod": "3.25.76"
   },
   "devDependencies": {
     "@nomiclabs/hardhat-ethers": "^2.2.3",
     "@types/bluebird": "^3.5.42",
     "@types/node": "^22.7.0",
     "hardhat": "^2.22.12"
+  },
+  "engines": {
+    "node": ">=22.13"
   }
 }

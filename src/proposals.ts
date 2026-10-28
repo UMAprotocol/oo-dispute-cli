@@ -24,6 +24,9 @@ export interface Proposal extends RequestKey {
     proposer: string;
     proposedPrice: BigNumber;
     proposalExpirationTimestamp: BigNumber;
+    proposalTx?: string;
+    logIndex?: number;
+    blockNumber?: number;
 }
 
 // A request is identified by all four fields; dropping the requester lets one request's dispute hide another's.
@@ -79,71 +82,78 @@ function compare(a: BigNumber, b: BigNumber): number {
     return a.lt(b) ? -1 : a.gt(b) ? 1 : 0;
 }
 
-async function fetchOracleProposals(config: Config, oracle: OracleConfig, currentBlockNumber: number, currentTimestamp: number) {
-    const searchConfig = {
-        fromBlock: Math.max(0, currentBlockNumber - config.blockLookbackPeriod),
-        toBlock: currentBlockNumber,
-        maxBlockLookBack: config.maxBlockLookBack,
-    };
+const tokenMetadata = new Map<string, Promise<{ symbol: string; decimals: number }>>();
+function getTokenMetadata(config: Config, address: string) {
+    const key = address.toLowerCase();
+    if (!tokenMetadata.has(key)) {
+        const token = getERC20ContractInstance(config.provider, address);
+        const metadata = withRetry(async () => ({ symbol: await token.symbol(), decimals: await token.decimals() }));
+        metadata.catch(() => tokenMetadata.delete(key));
+        tokenMetadata.set(key, metadata);
+    }
+    return tokenMetadata.get(key)!;
+}
 
+// Scans one oracle over [fromBlock, toBlock]: open proposals (enriched with live bond data) and every request disputed
+// in the range, so callers can also retire proposals they found earlier.
+export async function scanOracleRange(config: Config, oracle: OracleConfig, fromBlock: number, toBlock: number, currentTimestamp: number) {
+    const searchConfig = { fromBlock: Math.max(0, fromBlock), toBlock, maxBlockLookBack: config.maxBlockLookBack };
     const oo = await getOOV2ContractInstance(config.provider, oracle.address);
 
     const [proposeEvents, disputeEvents] = await Promise.all([
         withRetry(() => paginatedEventQuery<ProposePriceEvent>(oo, oo.filters.ProposePrice(null, null, null, null, null, null, null, null), searchConfig)),
         withRetry(() => paginatedEventQuery<DisputePriceEvent>(oo, oo.filters.DisputePrice(null, null, null, null, null, null, null), searchConfig)),
     ]);
+    const events = filterOpenProposals(proposeEvents, disputeEvents, currentTimestamp, config.onlyPolymarket);
 
-    return { oo, events: filterOpenProposals(proposeEvents, disputeEvents, currentTimestamp, config.onlyPolymarket) };
+    let failed = 0;
+    const loaded = await mapWithConcurrency(events, config.rpcConcurrency, async (event) => {
+        try {
+            const request = await withRetry(() => oo.getRequest(event.args.requester, event.args.identifier, event.args.timestamp, event.args.ancillaryData));
+            const { symbol, decimals } = await getTokenMetadata(config, request.currency);
+            return {
+                bond: request.finalFee.add(request.requestSettings.bond),
+                bondCurrency: request.currency,
+                bondCurrencySymbol: symbol,
+                bondCurrencyDecimals: decimals,
+                requester: event.args.requester,
+                requestTimestamp: event.args.timestamp,
+                ancillaryData: event.args.ancillaryData,
+                timestamp: event.args.timestamp,
+                identifier: event.args.identifier,
+                proposedPrice: event.args.proposedPrice,
+                proposalExpirationTimestamp: event.args.expirationTimestamp,
+                proposer: event.args.proposer,
+                ooAddress: event.address,
+                oracleKind: oracle.kind,
+                proposalTx: event.transactionHash,
+                logIndex: event.logIndex,
+                blockNumber: event.blockNumber,
+            } as Proposal;
+        } catch (error) {
+            failed++;
+            console.error(`🚨 Could not load request ${event.transactionHash} (log ${event.logIndex}): ${error}`);
+            return undefined;
+        }
+    });
+
+    return {
+        proposals: loaded.filter((p): p is Proposal => p !== undefined),
+        disputedIds: disputeEvents.map((event) => requestKeyId(event.args)),
+        failed,
+    };
 }
 
 export async function fetchProposals(config: Config): Promise<Proposal[]> {
     const block = await withRetry(() => config.provider.getBlock("latest"));
 
-    const tokenMetadata = new Map<string, Promise<{ symbol: string; decimals: number }>>();
-    const getTokenMetadata = (address: string) => {
-        const key = address.toLowerCase();
-        if (!tokenMetadata.has(key)) {
-            const token = getERC20ContractInstance(config.provider, address);
-            const metadata = withRetry(async () => ({ symbol: await token.symbol(), decimals: await token.decimals() }));
-            metadata.catch(() => tokenMetadata.delete(key));
-            tokenMetadata.set(key, metadata);
-        }
-        return tokenMetadata.get(key)!;
-    };
-
     const proposals: Proposal[] = [];
     let failed = 0;
     for (const oracle of config.oracles) {
-        const { oo, events } = await fetchOracleProposals(config, oracle, block.number, block.timestamp);
-        console.log(`🔎 ${oracle.kind} (${oracle.address}): ${events.length} open proposal(s)`);
-
-        const loaded = await mapWithConcurrency(events, config.rpcConcurrency, async (event) => {
-            try {
-                const request = await withRetry(() => oo.getRequest(event.args.requester, event.args.identifier, event.args.timestamp, event.args.ancillaryData));
-                const { symbol, decimals } = await getTokenMetadata(request.currency);
-                return {
-                    bond: request.finalFee.add(request.requestSettings.bond),
-                    bondCurrency: request.currency,
-                    bondCurrencySymbol: symbol,
-                    bondCurrencyDecimals: decimals,
-                    requester: event.args.requester,
-                    requestTimestamp: event.args.timestamp,
-                    ancillaryData: event.args.ancillaryData,
-                    timestamp: event.args.timestamp,
-                    identifier: event.args.identifier,
-                    proposedPrice: event.args.proposedPrice,
-                    proposalExpirationTimestamp: event.args.expirationTimestamp,
-                    proposer: event.args.proposer,
-                    ooAddress: event.address,
-                    oracleKind: oracle.kind,
-                } as Proposal;
-            } catch (error) {
-                failed++;
-                console.error(`🚨 Could not load request ${event.transactionHash} (log ${event.logIndex}): ${error}`);
-                return undefined;
-            }
-        });
-        proposals.push(...loaded.filter((p): p is Proposal => p !== undefined));
+        const scan = await scanOracleRange(config, oracle, block.number - config.blockLookbackPeriod, block.number, block.timestamp);
+        console.log(`🔎 ${oracle.kind} (${oracle.address}): ${scan.proposals.length + scan.failed} open proposal(s)`);
+        proposals.push(...scan.proposals);
+        failed += scan.failed;
     }
 
     if (failed > 0) {

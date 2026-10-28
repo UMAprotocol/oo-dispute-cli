@@ -80,14 +80,15 @@ async function resolveOracles(chainId: number, options: Options): Promise<Oracle
     return [{ kind: "oov2", address: await getAddress("OptimisticOracleV2", chainId) }];
 }
 
-export const initConfig = async (env: NodeJS.ProcessEnv, options: Options): Promise<Config> => {
+// readOnly: the MCP review server never signs, so it must not need (or see) the private key.
+export const initConfig = async (env: NodeJS.ProcessEnv, options: Options, { readOnly = false } = {}): Promise<Config> => {
     if (!env.CHAIN_ID) throw new Error("CHAIN_ID must be defined in env");
     const chainId = parseNumber("CHAIN_ID", env.CHAIN_ID, 0, { integer: true, min: 1 });
 
     const provider = getRetryProvider(chainId) as Provider;
 
-    if (!env.PRIVATE_KEY) throw new Error("PRIVATE_KEY must be defined in env");
-    const wallet = new ethers.Wallet(env.PRIVATE_KEY).connect(provider);
+    if (!readOnly && !env.PRIVATE_KEY) throw new Error("PRIVATE_KEY must be defined in env");
+    const wallet = (readOnly ? ethers.Wallet.createRandom() : new ethers.Wallet(env.PRIVATE_KEY!)).connect(provider);
 
     const disputeBatcherAddress = env.DISPUTE_BATCHER_ADDRESS || undefined;
     if (disputeBatcherAddress && !ethers.utils.isAddress(disputeBatcherAddress)) {

@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "oo-dispute": {
+      "command": "node",
+      "args": ["dist/mcp-entry.js", "--only-polymarket"],
+      "env": {
+        "CHAIN_ID": "${CHAIN_ID:-137}",
+        "NODE_URL_137": "${NODE_URL_137:-}",
+        "NODE_URLS_137": "${NODE_URLS_137:-}"
+      }
+    }
+  }
+}

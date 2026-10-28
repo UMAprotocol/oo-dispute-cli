@@ -14,7 +14,7 @@ Before sending, every dispute is re-checked against live chain state and simulat
 
 ## Prerequisites
 
-- Node.js (version 18 or higher)
+- Node.js (version 22.13 or higher; the review queue uses the built-in `node:sqlite`)
 - yarn (version 1.22.19 or higher)
 
 ## Installation
@@ -95,6 +95,48 @@ CHAIN_ID=137 NODE_URLS_137='["<RPC_1>","<RPC_2>"]' PRIVATE_KEY=<YOUR_PRIVATE_KEY
 
 To rehearse first without sending anything, add `--dry-run`.
 
+## Reviewing with Claude Code or Codex (MCP)
+
+When there are too many proposals to review by hand, agents can review them in parallel while a human sends the
+disputes. Nothing is hosted: the agent starts the MCP server as a local process.
+
+- **`yarn mcp`** (`dist/mcp-entry.js`): a local stdio MCP server. It scans the chain, keeps a shared review queue in
+  `.oo-dispute/review-<chain>.sqlite`, and gives agents read-only tools. It never sees `PRIVATE_KEY`.
+- **`yarn apply --watch`**: run by a human, with the key. It picks up the disputes that reviews call for, re-checks
+  them on chain, asks for confirmation, and sends them in batches.
+
+Setup:
+
+1. `yarn install --frozen-lockfile && yarn build` (Node 22.13 or later).
+2. Export `CHAIN_ID=137` and `NODE_URLS_137='["<rpc1>","<rpc2>"]'` (or `NODE_URL_137`).
+3. Open this folder in Claude Code and enable the `oo-dispute` server from `.mcp.json`. For Codex, see `AGENTS.md`.
+4. Ask the agent to run the `dispute-review` prompt, or: "Review the open proposals with three dispute-reviewer
+   subagents in parallel." The `dispute-reviewer` subagent (`.claude/agents/`) only has the review tools and web
+   search, with no shell.
+5. In another terminal: `PRIVATE_KEY=<key> yarn apply --watch` (add `--dry-run` to rehearse).
+
+How the queue works:
+
+- **One review per event.** Markets that share a neg-risk group (from Polymarket's public API) or an identical
+  description are grouped, so one review answers all of them. Agents can merge groups with `regroup`.
+- **Claims with leases.** `next_batch` hands each group to one agent for 10 minutes (`--lease-minutes`), most urgent
+  first. Work from an agent that stops comes back to the queue.
+- **New proposals keep arriving.** The queue re-scans the chain at most every 15 s (`SCAN_INTERVAL_SECONDS`).
+- **`unclear` comes back.** It is re-checked after a third of the remaining liveness (5–30 min), and again close to
+  expiry.
+- **Code decides, not the model.** A proposal becomes a dispute candidate only when the latest verdict disagrees with
+  the proposed price at confidence ≥ `--min-confidence` (default 0.8), from at least `--confirmations` distinct
+  reviewers (default 1). Submissions are rejected if the price the agent saw is stale or if more than one market in a
+  mutually exclusive group would resolve Yes.
+- **Cheap flags first.** Each proposal comes with deterministic flags: several Yes proposals in an exclusive group,
+  market price against the proposal, a too-early or 50-50 proposal, a price outside `res_data`, a rare proposer,
+  creator updates present, and less than 30 minutes left.
+- **Self-contained.** Context comes from the chain (ancillary data, creator updates from the bulletin board). The
+  Polymarket CLOB price is added when its public API answers, and is marked unavailable when it doesn't.
+
+`apply` options: `--watch`, `--interval <s>`, `--dry-run`, and `--auto --max-disputes <n> --max-bond <amount>` to
+send without asking within those limits. Only one `apply` can run per review database.
+
 ## Fork rehearsal
 
 `scripts/fork-rehearsal.js` creates test proposals on a local Polygon fork, so you can run the whole flow end to end without touching mainnet. It uses anvil's well-known test accounts and refuses to run unless the RPC it is given has the real Polygon contracts.
@@ -105,5 +147,9 @@ FORK_RPC=http://127.0.0.1:8555 node scripts/fork-rehearsal.js setup state.json 1
 # Run the CLI with the env the script prints, then:
 FORK_RPC=http://127.0.0.1:8555 node scripts/fork-rehearsal.js check state.json
 ```
+
+`scenario` mode instead creates Polymarket-style markets about past events (elections, sports, the Fed), some with
+wrong proposals and one with a prompt injection in its description, to rehearse agent review end to end:
+`FORK_RPC=http://127.0.0.1:8555 node scripts/fork-rehearsal.js scenario state.json`.
 
 The `DisputeBatcher` artifact comes from building `oracle/contracts` in `UMAprotocol/mcp-otb` with Foundry. Pass `managed` instead of `oov2` to create proposals on the Managed OOv2. If your fork RPC rejects historical log ranges, set `BLOCK_LOOKBACK_PERIOD` to the number of blocks mined on the fork and `MAX_BLOCK_LOOK_BACK=1`.
