@@ -5,7 +5,8 @@
   "main": "index.js",
   "scripts": {
     "build": "tsc",
-    "dispute": "node dist/mass-dispute-cli.js dispute"
+    "dispute": "node dist/mass-dispute-cli.js dispute",
+    "test": "tsc && node --test \"dist/**/*.test.js\""
   },
   "keywords": [],
   "author": "",
