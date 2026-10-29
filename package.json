@@ -9,6 +9,7 @@
     "test": "tsc && node --test \"dist/**/*.test.js\"",
     "apply": "node dist/mass-dispute-cli.js apply",
     "mcp": "node dist/mcp-entry.js",
+    "agents:setup": "node scripts/agents-setup.js",
     "fork:up": "scripts/fork-env.sh up",
     "fork:down": "scripts/fork-env.sh down",
     "fork:status": "scripts/fork-env.sh status",

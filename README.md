@@ -89,19 +89,23 @@ them.
 Agents review; you send. Nothing is hosted: the agent starts the MCP server (`dist/mcp-entry.js`) as a local
 process, and it keeps a shared queue in `.oo-dispute/review-137.sqlite` in this repo.
 
-1. **Build:** `yarn build`.
-2. **Give the MCP server its settings.** The Claude desktop app doesn't pass your shell variables, so put them in
-   `.oo-dispute/mcp.env`:
+1. **Set up the MCP server** for Claude Code and Codex, from this folder:
    ```bash
-   mkdir -p .oo-dispute && printf 'CHAIN_ID=137\nNODE_URLS_137=["https://<rpc-1>","https://<rpc-2>"]\nREVIEW_SELECTION=selections/midterms-2026.resolved.json\n' > .oo-dispute/mcp.env
+   yarn agents:setup --rpc "https://<rpc-1>,https://<rpc-2>" --selection selections/midterms-2026.resolved.json
    ```
-   - This file **wins over shell variables**. Never put `PRIVATE_KEY` in it: it is ignored.
-   - `REVIEW_SELECTION` makes the midterms the default scope; leave it out to review everything.
-   - Check that this file doesn't still point at a fork from an earlier rehearsal.
-3. **Open this folder in Claude Code** (a new session) and enable the `oo-dispute` server from `.mcp.json`. To check
-   it, ask: *"call `progress` on oo-dispute"*. The first call scans the chain and can take a few minutes.
-   - For Codex, see [AGENTS.md](AGENTS.md).
-   - `.mcp.json` passes `--only-polymarket`.
+   It builds if needed and registers the server with absolute paths to this repo and to the `node` running it, so
+   the desktop apps find it even with nvm or mise:
+   - **Claude Code:** a local-scope `oo-dispute` server for this folder, through the `claude` CLI or the one bundled
+     with the macOS desktop app;
+   - **Codex:** `[mcp_servers.oo-dispute]` in `~/.codex/config.toml`, after a backup;
+   - **Settings:** `.oo-dispute/mcp.env`, if it doesn't exist yet. The server reads the chain and RPC from this file,
+     which **wins over shell variables**. It never takes `PRIVATE_KEY`.
+
+   `--selection` makes the midterms the default scope; leave it out to review everything. Re-run the command after
+   switching Node versions or moving the repo. An agent can run it too: *"run `yarn agents:setup`"*.
+2. **Check `.oo-dispute/mcp.env`** if it already existed: it must not still point at a fork from an earlier rehearsal.
+3. **Open a new session in this folder** (Claude Code or Codex) and ask: *"call `progress` on oo-dispute"*. The
+   first call scans the chain and can take a few minutes. The server runs with `--only-polymarket`.
 4. **Start the review**, for example: *"Run the dispute-review prompt with three dispute-reviewer subagents in
    parallel on scope midterms-2026."* The `dispute-reviewer` subagent only has the review tools and web search, with
    no shell. Prefer a strong model for real decisions.
@@ -159,7 +163,8 @@ To stress-test the queue with thousands of simultaneous proposals, without spend
 | `secp256k1 unavailable, reverting to browser version` | Harmless. |
 | `CHAIN_ID is not set` / `No RPC configured` | Export the variables, put them in `.env` (CLI), or in `.oo-dispute/mcp.env` (agents). |
 | `exceed maximum block range`, `Log response size exceeded`, slow scans | Rejected ranges are halved automatically; if scans stay slow, set `MAX_BLOCK_LOOK_BACK=1000` (or lower), or use another provider. |
-| `oo-dispute` server missing or "failed to start" in Claude Code | Run `yarn build`, open a new session in this folder, and check `.oo-dispute/mcp.env`. If the desktop app can't find `node` (nvm, mise…), put the absolute path to `node` in your local `.mcp.json`. |
+| `oo-dispute` server missing or "failed to start" (Claude Code or Codex) | Run `yarn agents:setup` (again after switching Node versions), open a new session in this folder, and check `.oo-dispute/mcp.env`. |
+| Codex says the `oo-dispute` tools aren't available and offers to start the server itself | Stop it and run `yarn agents:setup`; Codex only loads MCP servers when a session starts. |
 | The agents see fork proposals during a real incident | A leftover `.oo-dispute/mcp.env` from a rehearsal: run `yarn fork:down` and recreate it. |
 | `apply` finds no candidates | Use the same `CHAIN_ID`/RPC and `--scope` as the agents, and don't point `--db`/`REVIEW_DB` elsewhere. |
 | `Another apply is already running` | Only one `apply` per database. Ctrl+C releases it at once; after a `kill -9`, wait 2 minutes. |
@@ -175,7 +180,8 @@ To stress-test the queue with thousands of simultaneous proposals, without spend
 |---|---|
 | `yarn dispute [options]` | Interactive terminal review and dispute (path A) |
 | `yarn apply [options]` | Send the disputes the agent reviews call for (path B) |
-| `yarn mcp [options]` | The MCP review server; agents normally start it from `.mcp.json` |
+| `yarn agents:setup [--rpc urls] [--selection file] [--claude] [--codex]` | Register the MCP server with Claude Code and Codex (path B) |
+| `yarn mcp [options]` | The MCP review server; agents start it themselves |
 | `yarn select resolve <file> [-o out]` | Resolve a selection's slugs/tags to ids through Gamma |
 | `yarn fork:up` / `fork:status` / `fork:down` | Local rehearsal fork |
 | `yarn fork:load` | Load test on a fork |
