@@ -24,8 +24,9 @@ proposal in the scope (default: the server's) until the queue is empty or the us
    - `define_scope` creates one.
 
    Pass `scope` to `progress`, `next_batch`, `at_risk` and `dispute_candidates`.
-3. Loop on `next_batch` → research the event → `submit_review` once per group. Agent names must be unique across
-   every session sharing the queue: use a random session tag plus a number (e.g. `k3f9-r1`), never a fixed name.
+3. Loop on `next_batch` → research the event → `submit_review` once per group. Give each reviewer in your session a
+   distinct agent name (`r1`, `r2`, …); the server adds a per-session suffix, so sessions sharing the queue never
+   collide.
 4. Review in parallel: `dispute-reviewer` subagents in Claude Code (`.claude/agents/`), `spawn_agent` in Codex, each
    with its own agent name and the scope. Watch `progress` / `at_risk` yourself. The `dispute-review` MCP prompt has
    the full guide.
@@ -51,8 +52,8 @@ skill) with absolute paths. The user
 then has to start a new session: servers are loaded at session start. The settings (`CHAIN_ID`, `NODE_URLS_137`,
 `REVIEW_SELECTION`) come from `.oo-dispute/mcp.env`.
 
-In Codex, start a review with `$review-disputes`. Its reviewers are Codex subagents; more Codex sessions can join the
-same queue, each with its own session tag.
+In Codex, start a review with `$review-disputes`. Its reviewers are Codex subagents; more sessions, Claude Code or Codex, can join the
+same queue.
 
 ## Development
 

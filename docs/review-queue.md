@@ -24,7 +24,10 @@ Three pieces share one SQLite database (`.oo-dispute/review-<chain>.sqlite`, or 
   such proposals are flagged. Agents can merge groups with `regroup`.
 - **Claims with leases.** `next_batch` hands each group to one agent for 10 minutes (`--lease-minutes`), most urgent
   first. A group larger than the batch is served in parts while the claim stays with its reviewer. An agent that
-  stops gives its work back with `release_claim`, or the lease expires.
+  stops gives its work back with `release_claim`, or the lease expires. Each MCP process (one per Claude Code or
+  Codex session) appends its own random suffix to agent names (`r1` → `r1@3fa2c1`), so sessions sharing the queue
+  never share or release each other's claims, even if their agents pick the same names. A restarted session gets a
+  new suffix; its old claims come back when their lease expires.
 - **New proposals keep arriving.** The queue re-scans the chain at most every 15 s (`SCAN_INTERVAL_SECONDS`). One
   process scans at a time and the others wait for it.
 - **`unclear` comes back.** It is re-checked after a third of the remaining liveness (5–30 min), doubling with each

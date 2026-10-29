@@ -16,9 +16,8 @@ a new session. Do not start the server yourself.
 
 1. Call `review_policy` and follow it exactly. Call `progress` with the scope. The first call scans the chain and may
    take a few minutes.
-2. Pick a session tag of 4 random lowercase letters and digits (for example `k3f9`). Agent names are
-   `<tag>-r1`, `<tag>-r2`, …: other sessions may be reviewing the same queue, and two reviewers with the same name
-   would share (and release) each other's claims.
+2. Name the reviewers `r1`, `r2`, …, distinct within this session. The server adds a suffix per session (it
+   answers as e.g. `r1@3fa2c1`), so other sessions sharing the queue never share or release their claims.
 3. Launch that many `dispute-reviewer` subagents in parallel, one per agent name, each told its agent name, the scope
    and its share of the group limit. While they work, check `progress` and `at_risk` and tell the user about anything
    close to expiry.

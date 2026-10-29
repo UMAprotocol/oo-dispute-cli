@@ -7,6 +7,7 @@ import { Proposal } from "./proposals";
 import { evaluate, needsReview, recheckTime } from "./review/policy";
 import { groupFor, proposalId, ReviewQueue } from "./review/queue";
 import { now, ReviewStore } from "./review/store";
+import { qualifyAgent } from "./mcp-server";
 
 const hex = (text: string) => ethers.utils.hexlify(ethers.utils.toUtf8Bytes(text));
 const ANCILLARY =
@@ -130,6 +131,25 @@ test("next_batch groups markets of one event, claims them, and other agents skip
     assert.deepEqual(second.groups.map((g) => g.label), ["Did Spain win Euro 2024?"], "the claimed race group is not handed out again");
     const third = await queue.nextBatch("reviewer-3", 20, 3);
     assert.equal(third.groups.length, 0);
+});
+
+test("two sessions using the same agent name get separate claims", async () => {
+    const { queue, store, add } = setupQueue();
+    add(makeProposal("Will Trump win?", RACE, ONE, 1, 3000), true);
+    add(makeProposal("Did Spain win Euro 2024?", "Resolves Yes if Spain won the UEFA Euro 2024 final.", BigNumber.from(0), 3, 6000));
+    const a = qualifyAgent("reviewer-1", "aaaaaa");
+    const b = qualifyAgent("reviewer-1", "bbbbbb");
+    assert.equal(a, "reviewer-1@aaaaaa");
+    assert.equal(qualifyAgent(a, "aaaaaa"), a, "a name the session already returned is not suffixed twice");
+
+    const first = await queue.nextBatch(a, 20, 1);
+    const second = await queue.nextBatch(b, 20, 1);
+    assert.equal(first.groups.length, 1);
+    assert.equal(second.groups.length, 1);
+    assert.notEqual(first.groups[0].group_key, second.groups[0].group_key);
+
+    assert.equal(store.releaseAgentClaims(b).length, 1, "releasing one session's claims...");
+    assert.equal((await queue.nextBatch(qualifyAgent("reviewer-2", "cccccc"), 20, 3)).groups.length, 1, "...leaves the other's in place");
 });
 
 test("submit_review validates the seen price and mutual exclusivity, then marks disputes", async () => {

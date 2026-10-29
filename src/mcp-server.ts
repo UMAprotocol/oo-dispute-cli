@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { Command } from "commander";
+import { randomBytes } from "crypto";
 import { readFileSync } from "fs";
 import { userPath } from "./paths";
 import { z } from "zod";
@@ -39,9 +40,19 @@ const criteria = z
     })
     .optional();
 
-const agentName = z.string().min(1).max(64).describe("Your reviewer name, unique across every session using this queue, e.g. k3f9-r1 (random tag + number)");
+const agentName = z.string().min(1).max(64).describe("Your reviewer name, distinct from the other reviewers in your session, e.g. r1. The server adds a per-session suffix.");
+
+// Claims belong to an agent name. Each MCP process (one per Claude Code / Codex session) appends its own random suffix,
+// so sessions sharing the queue can't share or release each other's claims even if their agents pick the same name.
+// Names this process already returned (with the suffix) are passed through unchanged.
+export function qualifyAgent(agent: string, session: string): string {
+    const suffix = `@${session}`;
+    return agent.endsWith(suffix) ? agent : `${agent}${suffix}`;
+}
 
 export async function startMcpServer(argv: string[]) {
+    const session = randomBytes(3).toString("hex");
+    const qualify = (agent: string) => qualifyAgent(agent, session);
     // The review server never signs. Keep the key out of its environment even if a .env provides one.
     delete process.env.PRIVATE_KEY;
     const program = new Command()
@@ -120,7 +131,7 @@ export async function startMcpServer(argv: string[]) {
                 scope: scopeParam,
             },
         },
-        ({ agent, max_proposals, max_groups, scope }) => respond(() => queue.nextBatch(agent, max_proposals, max_groups, scopeOf(scope)))
+        ({ agent, max_proposals, max_groups, scope }) => respond(() => queue.nextBatch(qualify(agent), max_proposals, max_groups, scopeOf(scope)))
     );
 
     registerTool(
@@ -147,7 +158,7 @@ export async function startMcpServer(argv: string[]) {
                     .min(1),
             },
         },
-        ({ agent, group_key, summary, evidence, verdicts }) => respond(() => queue.submitReview(agent, group_key, summary, evidence, verdicts))
+        ({ agent, group_key, summary, evidence, verdicts }) => respond(() => queue.submitReview(qualify(agent), group_key, summary, evidence, verdicts))
     );
 
     registerTool(
@@ -158,7 +169,7 @@ export async function startMcpServer(argv: string[]) {
             inputSchema: { agent: agentName, group_key: z.string().optional() },
         },
         ({ agent, group_key }) =>
-            respond(() => (group_key ? { released: queue.store.releaseClaim(group_key, agent) } : { released_groups: queue.store.releaseAgentClaims(agent) }))
+            respond(() => (group_key ? { released: queue.store.releaseClaim(group_key, qualify(agent)) } : { released_groups: queue.store.releaseAgentClaims(qualify(agent)) }))
     );
 
     registerTool(

@@ -85,8 +85,8 @@ You coordinate the review of open UMA Optimistic Oracle proposals with the oo-di
    \`progress\`, \`next_batch\`, \`at_risk\` and \`dispute_candidates\` call, and to each reviewer. Report \`unresolved\`
    entries to the user: those parts of the selection are not covered.
 2. Start several reviewers in parallel: \`dispute-reviewer\` subagents in Claude Code, \`spawn_agent\` in Codex. Give
-   each a distinct agent name made of a random session tag, e.g. k3f9-r1, k3f9-r2, ...: other sessions may share the
-   queue, and reviewers with the same name share (and release) each other's claims. Each loops on \`next_batch\` /
+   each a distinct agent name (r1, r2, ...); the server adds a per-session suffix, so other sessions sharing the queue
+   never collide. Each loops on \`next_batch\` /
    \`submit_review\` until the queue is empty. Without subagents, follow \`review_policy\` yourself in the same loop.
 3. While they work, check \`progress\` and \`at_risk\`. If \`unresolved_expiring\` grows, start more reviewers or
    review the at-risk proposals yourself first.

@@ -116,8 +116,9 @@ process, and it keeps a shared queue in `.oo-dispute/review-137.sqlite` in this 
    - A plain *"revisa las propuestas en liveness"* works in both.
    - **Scopes:** `permissionless` (the OOv2, where the midterms are and liveness is final), `managed` (the Managed
      OOv2, disputable until settled), `midterms-2026` and `all`.
-   - Each reviewer gets a random session tag in its agent name (e.g. `k3f9-r1`), so several sessions, in Claude Code
-     and Codex at once, can share the queue. Prefer a strong model for real decisions.
+   - Several sessions, in Claude Code and Codex at once, can share the queue: the MCP server gives each session's
+     agent names their own suffix (e.g. `r1@3fa2c1`), so they never share or release each other's claims. Prefer a
+     strong model for real decisions.
 5. **Send the disputes** from a terminal, with the same `CHAIN_ID`/RPC and your key. It shares the agents' queue,
    `.oo-dispute/review-137.sqlite` in this repo, from whatever folder you run it:
    ```bash
