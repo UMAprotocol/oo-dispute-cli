@@ -6,7 +6,11 @@ import { POLYMARKET_V2_OO_REPORTER } from "./constants";
 import { conditionId, parseAncillary, questionId } from "./polymarket";
 import { Proposal } from "./proposals";
 import { groupFor, proposalId, ReviewQueue } from "./review/queue";
-import { compileSelection, parseSelection, protocolOf, resolveSelection } from "./review/selection";
+import { BUILTIN_SCOPES, compileSelection, parseSelection, protocolOf, resolveSelection } from "./review/selection";
+import { openReview } from "./review/setup";
+import { mkdtempSync } from "fs";
+import { tmpdir } from "os";
+import { join } from "path";
 import { now, ReviewStore, StoredProposal } from "./review/store";
 
 const hex = (text: string) => ethers.utils.hexlify(ethers.utils.toUtf8Bytes(text));
@@ -135,6 +139,18 @@ test("scopes limit what next_batch, progress and candidates see, and are shared 
 
     // Another process opening the same database sees the scope.
     assert.deepEqual(new ReviewQueue({ rpcConcurrency: 4, oracles: [] } as unknown as Config, store, { policy: { minConfidence: 0.8, minConfirmations: 1 }, leaseSeconds: 600, scanIntervalSeconds: 1e6, fetchMarketData: false }).listScopes().map((s) => s.name), ["midterms"]);
+});
+
+test("every queue has the permissionless and managed scopes, split by oracle", () => {
+    const oov2 = stored(makeProposal("Will Republicans win the House in 2026?", "701", { oracle: "oov2" }));
+    const managed = stored(makeProposal("Will Democrats win the Senate in 2026?", "702", { oracle: "managed" }));
+    const pick = (name: string) => [oov2, managed].filter(compileSelection(BUILTIN_SCOPES.find((s) => s.name === name)!)).map((sp) => sp.context.parsed.marketId);
+    assert.deepEqual(pick("permissionless"), ["701"]);
+    assert.deepEqual(pick("managed"), ["702"]);
+
+    const db = join(mkdtempSync(join(tmpdir(), "oo-scopes-")), "review.sqlite");
+    const { queue } = openReview({ chainId: 137, rpcConcurrency: 4, oracles: [] } as unknown as Config, { db });
+    assert.deepEqual(queue.listScopes().map((s) => s.name), ["managed", "permissionless"]);
 });
 
 test("submitting the in-scope members of a group releases the claim even if out-of-scope members remain", async () => {

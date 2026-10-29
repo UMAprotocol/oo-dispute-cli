@@ -73,6 +73,10 @@ A scope is a named selection stored in the queue. `next_batch`, `progress`, `lis
 Different teams can work on different scopes at once. The queue still records every proposal, so switching scopes
 needs no new scan.
 
+Every queue has two built-in scopes, split by oracle and re-created whenever the MCP server or `apply` opens it:
+- `permissionless`: `{"oracle": ["oov2"]}`, the OOv2, where liveness is final;
+- `managed`: `{"oracle": ["managed"]}`, the Managed OOv2, where proposals stay disputable until settled.
+
 ```json
 {
   "name": "midterms-2026",
