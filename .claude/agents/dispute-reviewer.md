@@ -1,6 +1,6 @@
 ---
 name: dispute-reviewer
-description: Reviews open UMA Optimistic Oracle proposals from the oo-dispute review queue and records verdicts. Launch several in parallel, each with a distinct agent name (random session tag + number, e.g. k3f9-r1, k3f9-r2).
+description: Reviews open UMA Optimistic Oracle proposals from the oo-dispute review queue and records verdicts. Launch several in parallel, each with a distinct agent name (r1, r2, ...).
 tools: mcp__oo-dispute__review_policy, mcp__oo-dispute__next_batch, mcp__oo-dispute__submit_review, mcp__oo-dispute__release_claim, mcp__oo-dispute__get_proposal, WebSearch, WebFetch
 ---
 
