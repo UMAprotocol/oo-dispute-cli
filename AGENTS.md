@@ -9,8 +9,9 @@ Polygon) when the usual services are down. Agents **review** proposals. Humans *
 The `oo-dispute` MCP server keeps a shared review queue on disk. Several agents can work on it at once. Its settings
 come from `.oo-dispute/mcp.env` in this repo; see [Setup](#setup-claude-code-and-codex) if its tools are missing.
 
-A short request such as "review the proposals", "revisa las propuestas en liveness" or `/review-disputes` means:
-follow [.claude/commands/review-disputes.md](.claude/commands/review-disputes.md). That is, review every open
+A short request such as "review the proposals", "revisa las propuestas en liveness", `/review-disputes` or
+`$review-disputes` means: follow [.claude/commands/review-disputes.md](.claude/commands/review-disputes.md) in Claude
+Code, or the Codex skill [codex/skills/review-disputes/SKILL.md](codex/skills/review-disputes/SKILL.md). That is, review every open
 proposal in the scope (default: the server's) until the queue is empty or the user's limit is reached, then show
 `progress` and `dispute_candidates`. The steps:
 
@@ -23,10 +24,11 @@ proposal in the scope (default: the server's) until the queue is empty or the us
    - `define_scope` creates one.
 
    Pass `scope` to `progress`, `next_batch`, `at_risk` and `dispute_candidates`.
-3. Loop on `next_batch` (with a unique agent name) → research the event → `submit_review` once per group.
-4. In Claude Code, launch several `dispute-reviewer` subagents in parallel (`.claude/agents/`), each with its own
-   agent name and the scope, and watch `progress` / `at_risk` yourself. The `dispute-review` MCP prompt has the full
-   guide.
+3. Loop on `next_batch` → research the event → `submit_review` once per group. Agent names must be unique across
+   every session sharing the queue: use a random session tag plus a number (e.g. `k3f9-r1`), never a fixed name.
+4. Review in parallel: `dispute-reviewer` subagents in Claude Code (`.claude/agents/`), `spawn_agent` in Codex, each
+   with its own agent name and the scope. Watch `progress` / `at_risk` yourself. The `dispute-review` MCP prompt has
+   the full guide.
 5. Proposals whose reviews call for a dispute show up in `dispute_candidates`. A `conflict` (reviewers disagree)
    is never sent automatically: report it to the user.
 
@@ -44,12 +46,13 @@ Those aren't supported yet.
 
 If the `oo-dispute` tools aren't available, don't start the server yourself. Ask the user to run, or run with their
 OK, `yarn agents:setup` in this repo (add `--rpc <url>` if `.oo-dispute/mcp.env` doesn't exist yet). It builds and
-registers the server for Claude Code (local scope) and Codex (`~/.codex/config.toml`) with absolute paths. The user
+registers the server for Claude Code (local scope) and Codex (`~/.codex/config.toml`, plus the `review-disputes`
+skill) with absolute paths. The user
 then has to start a new session: servers are loaded at session start. The settings (`CHAIN_ID`, `NODE_URLS_137`,
 `REVIEW_SELECTION`) come from `.oo-dispute/mcp.env`.
 
-Codex has no `dispute-reviewer` subagent. To review in parallel, run several Codex sessions, each with its own agent
-name; they share the same queue.
+In Codex, start a review with `$review-disputes`. Its reviewers are Codex subagents; more Codex sessions can join the
+same queue, each with its own session tag.
 
 ## Development
 

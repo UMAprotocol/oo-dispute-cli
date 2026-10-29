@@ -1,0 +1,4 @@
+interface:
+  display_name: "Review disputes"
+  short_description: "Review open UMA OO proposals in parallel and report what to dispute"
+  default_prompt: "Use $review-disputes on scope permissionless with 3 reviewers."

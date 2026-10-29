@@ -39,7 +39,7 @@ const criteria = z
     })
     .optional();
 
-const agentName = z.string().min(1).max(64).describe("Your reviewer name, unique per parallel reviewer, e.g. reviewer-1");
+const agentName = z.string().min(1).max(64).describe("Your reviewer name, unique across every session using this queue, e.g. k3f9-r1 (random tag + number)");
 
 export async function startMcpServer(argv: string[]) {
     // The review server never signs. Keep the key out of its environment even if a .env provides one.
