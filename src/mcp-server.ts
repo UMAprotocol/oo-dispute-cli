@@ -204,12 +204,18 @@ export async function startMcpServer(argv: string[]) {
     registerTool(
         server,
         "dispute_candidates",
-        { description: "Proposals whose reviews call for a dispute and that have not been sent yet.", inputSchema: { scope: scopeParam }, annotations: readOnly },
+        {
+            description:
+                "Proposals whose reviews call for a dispute and that have not been sent yet, with the ids and links a human needs to check them: Polymarket market id and page, UMA question id, CTF condition id, request fields, proposer, bond and proposal transaction.",
+            inputSchema: { scope: scopeParam },
+            annotations: readOnly,
+        },
         ({ scope }) =>
             respond(() =>
                 queue.candidates(scopeOf(scope)).map(({ stored, evaluation }) => ({
                     ...queue.summary(stored, evaluation, Math.floor(Date.now() / 1000)),
                     confirming_agents: evaluation.confirmingAgents,
+                    ...queue.identifiers(stored),
                 }))
             )
     );

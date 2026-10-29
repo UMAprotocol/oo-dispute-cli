@@ -24,6 +24,7 @@ import { GroupRow, now, ProposalContext, ReviewStore, StoredProposal } from "./s
 // Proposals with less time left than this are not handed out: a review would not finish in time.
 const MIN_SECONDS_LEFT_TO_REVIEW = 120;
 const MARKET_DATA_MAX_AGE_SECONDS = 300;
+const EXPLORERS: Record<number, string> = { 1: "https://etherscan.io", 137: "https://polygonscan.com" };
 // A batch is one tool result. MCP clients cap those (Claude Code at about 50 KB) and spill larger ones to a file a
 // reviewer may not be able to read, which strands the claims it holds. Each proposal is about 3 KB.
 const MAX_BATCH_CHARS = 30_000;
@@ -321,6 +322,7 @@ export class ReviewQueue {
                 const market = await this.marketData(sp.proposal);
                 market.eventId ??= context.market.eventId;
                 market.eventTitle ??= context.market.eventTitle;
+                market.eventSlug ??= context.market.eventSlug;
                 if (market.status === "available" || context.market.status !== "available") context.market = market;
                 changed = true;
             }
@@ -550,6 +552,29 @@ export class ReviewQueue {
             .filter((sp) => !onlyUnresolved || evaluations.get(sp.id)!.action !== "agree")
             .slice(0, limit)
             .map((sp) => this.summary(sp, evaluations.get(sp.id)!, atTime));
+    }
+
+    // Ids and links a human needs to check a candidate before sending a dispute: the UMA request, the Polymarket market
+    // and the proposal transaction.
+    identifiers(sp: StoredProposal) {
+        const { proposal, context } = sp;
+        const question = questionId(proposal.ancillaryData);
+        const explorer = EXPLORERS[this.config.chainId];
+        const eventSlug = context.market.eventSlug;
+        return {
+            market_id: context.parsed.marketId ?? null,
+            question_id: question,
+            condition_id: conditionId(proposal.requester, question),
+            requester: proposal.requester,
+            request_timestamp: proposal.timestamp.toString(),
+            identifier: ethers.utils.parseBytes32String(proposal.identifier),
+            oracle: proposal.oracleKind,
+            proposer: proposal.proposer,
+            bond: `${ethers.utils.formatUnits(proposal.bond, proposal.bondCurrencyDecimals)} ${proposal.bondCurrencySymbol}`,
+            proposal_tx: proposal.proposalTx,
+            proposal_tx_url: explorer && proposal.proposalTx ? `${explorer}/tx/${proposal.proposalTx}` : undefined,
+            polymarket_url: eventSlug ? `https://polymarket.com/event/${eventSlug}` : undefined,
+        };
     }
 
     summary(sp: StoredProposal, evaluation: Evaluation, atTime: number) {
