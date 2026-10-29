@@ -68,9 +68,13 @@ async function reviewer(index, stopAt) {
     const { client, call } = await connect(agent);
     const stats = { agent, batches: 0, empty_batches: 0, groups: 0, verdicts: { p1: 0, p2: 0, unclear: 0 }, unknown_markets: 0, errors: {}, next_batch_ms: [], submit_ms: [] };
     const firstLooks = new Set();
+    // When the generator finished, as first seen here: stopping also needs a queue scan after it, or the last wave of
+    // proposals is never reviewed.
+    let doneSeenAt;
     try {
         while (now() < stopAt.value) {
             const answers = readAnswers();
+            if (answers.done && doneSeenAt === undefined) doneSeenAt = now();
             const key = new Map(answers.items.map((it) => [it.market_id, it]));
             let t = Date.now();
             const batch = await call("next_batch", { agent, max_proposals: MAX_PROPOSALS, max_groups: 3, scope: SCOPE });
@@ -79,7 +83,8 @@ async function reviewer(index, stopAt) {
             if (!batch.groups.length) {
                 stats.empty_batches++;
                 const q = batch.queue;
-                if (answers.done && q.by_status.pending === 0 && q.by_status.recheck === 0 && q.by_status.needs_confirmation === 0) break;
+                const scannedSinceDone = answers.done && now() - q.last_scan_seconds_ago > doneSeenAt;
+                if (scannedSinceDone && q.by_status.pending === 0 && q.by_status.recheck === 0 && q.by_status.needs_confirmation === 0) break;
                 await sleep(5000);
                 continue;
             }
