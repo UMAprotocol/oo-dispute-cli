@@ -1,4 +1,5 @@
 import * as readline from "readline";
+import { existsSync, readFileSync } from "fs";
 import { BigNumber, ethers } from "ethers";
 import { initConfig } from "./config";
 import { delay } from "./concurrency";
@@ -15,6 +16,7 @@ export interface ApplyOptions extends Options, ReviewFlags {
     auto: boolean;
     maxDisputes?: string;
     maxBond?: string;
+    scope?: string;
 }
 
 const STORED_STATUS: Partial<Record<DisputeStatus, "disputed" | "already-disputed" | "failed" | "skipped">> = {
@@ -51,6 +53,10 @@ async function runApply(options: ApplyOptions, ask: (question: string) => Promis
         });
     }
 
+    // A selection file is registered as a scope first, so apply and the agents share it by name.
+    const scope = options.scope && existsSync(options.scope) ? (await queue.defineScope(JSON.parse(readFileSync(options.scope, "utf8")))).name : options.scope;
+    if (scope) queue.scopeMatch(scope); // fail fast on an unknown scope
+
     const engine = new DisputeEngine(config, async (question) => isYesAnswer(await ask(question)));
     await engine.init();
 
@@ -62,12 +68,12 @@ async function runApply(options: ApplyOptions, ask: (question: string) => Promis
     let sentBond = 0;
     const declined = new Set<string>();
 
-    console.log(`${config.dryRun ? "🧪 DRY RUN. " : ""}👛 ${config.wallet.address}; policy ${JSON.stringify(policy)}; ${options.watch ? `watching every ${options.interval}s, press Ctrl+C to stop` : "single pass"}.`);
+    console.log(`${config.dryRun ? "🧪 DRY RUN. " : ""}👛 ${config.wallet.address}; policy ${JSON.stringify(policy)}; ${scope ? `scope ${scope}; ` : ""}${options.watch ? `watching every ${options.interval}s, press Ctrl+C to stop` : "single pass"}.`);
 
     for (;;) {
         store.tryLock("apply", owner, Math.max(120, (intervalMs / 1000) * 3));
         await queue.refresh();
-        const candidates = queue.candidates().filter((c) => !declined.has(c.stored.id));
+        const candidates = queue.candidates(scope).filter((c) => !declined.has(c.stored.id));
 
         if (candidates.length > 0) {
             const atTime = now();
@@ -120,7 +126,7 @@ async function runApply(options: ApplyOptions, ask: (question: string) => Promis
 
         if (!options.watch) break;
         if (candidates.length > 0) console.log(`👀 Still watching for new dispute candidates every ${options.interval}s (Ctrl+C to stop).`);
-        const progress = queue.progress();
+        const progress = queue.progress(scope);
         process.stdout.write(
             `\r⏳ ${new Date().toLocaleTimeString()} open ${progress.open_proposals}, pending ${progress.by_status.pending}, recheck ${progress.by_status.recheck}, ` +
                 `needs confirmation ${progress.by_status.needs_confirmation}, unresolved <30 min ${progress.unresolved_expiring.under_30_min}, disputes ${JSON.stringify(progress.disputes)}   `

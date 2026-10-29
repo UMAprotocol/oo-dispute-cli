@@ -37,7 +37,16 @@ program
     .option('--db <path>', 'Review database (default .oo-dispute/review-<chain>.sqlite)')
     .option('--min-confidence <n>', 'Confidence a disagreement needs to become a dispute')
     .option('--confirmations <n>', 'Independent reviewers that must agree before disputing')
+    .option('--scope <name-or-file>', 'Only send disputes for proposals in this scope (a name defined in the review, or a selection JSON file)')
     // Loaded on demand: the review queue needs node:sqlite (Node 22.13+), and `dispute` must keep working on older Node.
     .action(async (options) => (await import('./apply')).handleApply({ ...options, sortRemainingTime: true, sortBondSize: false, sortRandom: false, sortAge: false, managedOo: false, flushBefore: '10' }));
+
+program
+    .command('select')
+    .description('Prepare market selections (scopes) for the agent review')
+    .command('resolve <file>')
+    .description('Resolve slugs, event slugs and tags in a selection JSON to ids through Polymarket Gamma, so it works offline later')
+    .option('-o, --out <file>', 'Output file (default <file>.resolved.json)')
+    .action(async (file, options) => (await import('./review/select-cli')).resolveSelectionFile(file, options.out));
 
 program.parse(process.argv);

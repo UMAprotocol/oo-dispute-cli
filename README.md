@@ -135,7 +135,56 @@ How the queue works:
 - **Self-contained.** Context comes from the chain (ancillary data, creator updates from the bulletin board). The
   Polymarket CLOB price is added when its public API answers, and is marked unavailable when it doesn't.
 
-`apply` options: `--watch`, `--interval <s>`, `--dry-run`, and `--auto --max-disputes <n> --max-bond <amount>` to
+### Selecting markets (scopes)
+
+To review only some markets, for example the midterms, define a **scope**. A scope is a named selection stored in
+the shared queue, so several agents and `apply` can use it by name, and different teams can work on different
+scopes at the same time.
+
+A selection file looks like this (see `selections/midterms.example.json`):
+
+```json
+{
+  "name": "midterms",
+  "include": {
+    "event_slugs": ["which-party-will-win-the-senate-in-2026"],
+    "tags": ["midterms"],
+    "market_ids": ["6301315"],
+    "title_regex": "\\b(Senate|House|Governor)\\b"
+  },
+  "exclude": { "title_regex": "primary" },
+  "protocol": ["polymarket_v1"],
+  "oracle": ["managed", "oov2"]
+}
+```
+
+A proposal is in the scope when all of these hold:
+- it matches **any** `include` criterion (or `include` is empty);
+- it passes `protocol` (`polymarket_v1`, `polymarket_v2` or `other`, judged by requester) and `oracle`;
+- it matches no `exclude` criterion.
+
+Matching only uses data from the chain: the `market_id` in the ancillary data, the UMA question id, the CTF
+condition id, the title, the requester and the oracle. It therefore keeps working when Polymarket's APIs are down.
+Market slugs, event slugs and Gamma tags are converted to ids through Gamma:
+
+- **Before the incident**, run `yarn select resolve selections/midterms.json`. It writes
+  `midterms.resolved.json` with the ids, and lists under `unresolved` anything Gamma could not answer.
+  - Gamma refuses page offsets past about 2,000 events, so broad tags such as `sports` come back truncated, with a
+    warning. Use narrow tags (`midterms`, about 1,300 events) or event slugs.
+  - If none of the `include` criteria resolve, the selection matches **nothing**, never everything.
+- **When reviewing**, load the scope in one of these ways:
+  - `node dist/mcp-entry.js --select midterms.resolved.json`, or `REVIEW_SELECTION=<file>` in
+    `.oo-dispute/mcp.env`. A selection loaded at start-up becomes the default scope.
+  - Ask the agent to create one with the `define_scope` tool ("review only the Senate markets").
+  - Check them with `list_scopes`. `next_batch`, `progress`, `list_queue`, `at_risk` and `dispute_candidates` take
+    `scope`; `"all"` means every proposal.
+- **When sending**, run `yarn apply --watch --scope midterms` (a scope name or a selection file).
+
+Scopes filter only what is handed out and listed. The queue still records every proposal, so switching scopes
+doesn't need a new chain scan. Polymarket V2 proposals (JSON ancillary data) are not parsed yet, so `title_regex`
+and `market_ids` don't match them; `protocol: ["polymarket_v2"]` does. V2 is also excluded by `--only-polymarket`.
+
+`apply` options: `--watch`, `--interval <s>`, `--dry-run`, `--scope <name|file>`, and `--auto --max-disputes <n> --max-bond <amount>` to
 send without asking within those limits. Only one `apply` can run per review database.
 
 ## Fork rehearsal

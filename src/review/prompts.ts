@@ -78,6 +78,10 @@ export const ORCHESTRATOR_GUIDE = `# Coordinating a dispute review
 You coordinate the review of open UMA Optimistic Oracle proposals with the oo-dispute MCP tools.
 
 1. Call \`progress\` to see the size of the queue and what is about to expire.
+   If the user wants only some markets (for example "only the midterms"), check \`list_scopes\` or create one with
+   \`define_scope\` (ids, slugs, event slugs, Gamma tags, a title regex, protocol, oracle) and pass that scope to every
+   \`progress\`, \`next_batch\`, \`at_risk\` and \`dispute_candidates\` call, and to each reviewer. Report \`unresolved\`
+   entries to the user: those parts of the selection are not covered.
 2. Start several reviewers in parallel. In Claude Code, launch \`dispute-reviewer\` subagents, each with a distinct
    agent name (reviewer-1, reviewer-2, ...). Each loops on \`next_batch\` / \`submit_review\` until the queue is empty.
    Without subagents, follow \`review_policy\` yourself in the same loop.

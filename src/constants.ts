@@ -14,6 +14,10 @@ export const POLYMARKET_REQUESTER_ADDRESSES = [
     "0x65070BE91477460D8A7AeEb94ef92fe056C2f2A7",
 ];
 
+// Requester of Polymarket V2 markets (OOReporter). Only used to label a proposal's protocol for selections: V2
+// ancillary data (JSON) is not parsed yet, and V2 is not in POLYMARKET_REQUESTER_ADDRESSES.
+export const POLYMARKET_V2_OO_REPORTER = "0x53703dd6129d723066b6362510e5ae2fecd48218";
+
 // ethers v5 assumes a 1.5 gwei tip, which Polygon nodes reject as underpriced. These floors apply before the
 // multiplier and can be overridden with MIN_PRIORITY_FEE_GWEI.
 export const MIN_PRIORITY_FEE_GWEI: Record<number, number> = { [POLYGON_CHAIN_ID]: 30 };

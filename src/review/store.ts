@@ -117,6 +117,7 @@ export class ReviewStore {
                 recheck_after INTEGER
             );
             CREATE INDEX IF NOT EXISTS decisions_proposal ON decisions(proposal_id);
+            CREATE TABLE IF NOT EXISTS scopes (name TEXT PRIMARY KEY, definition TEXT NOT NULL, updated_at INTEGER NOT NULL);
             CREATE TABLE IF NOT EXISTS disputes (
                 proposal_id TEXT PRIMARY KEY,
                 status TEXT NOT NULL,
@@ -125,6 +126,10 @@ export class ReviewStore {
                 updated_at INTEGER NOT NULL
             );
         `);
+        // Databases created before scopes existed: the claim remembers the scope the agent was working in.
+        if (!(this.db.prepare("PRAGMA table_info(claims)").all() as { name: string }[]).some((c) => c.name === "scope")) {
+            this.db.exec("ALTER TABLE claims ADD COLUMN scope TEXT");
+        }
     }
 
     // BEGIN IMMEDIATE takes the write lock up front, so two agents can't claim the same group.
@@ -228,13 +233,30 @@ export class ReviewStore {
         return new Map(rows.map((r) => [r.proposer, r.n]));
     }
 
-    claims(): Map<string, { agent: string; leaseUntil: number }> {
-        const rows = this.db.prepare("SELECT * FROM claims").all() as { group_key: string; agent: string; lease_until: number }[];
-        return new Map(rows.map((r) => [r.group_key, { agent: r.agent, leaseUntil: r.lease_until }]));
+    claims(): Map<string, { agent: string; leaseUntil: number; scope?: string }> {
+        const rows = this.db.prepare("SELECT * FROM claims").all() as { group_key: string; agent: string; lease_until: number; scope: string | null }[];
+        return new Map(rows.map((r) => [r.group_key, { agent: r.agent, leaseUntil: r.lease_until, scope: r.scope ?? undefined }]));
     }
 
-    claim(groupKey: string, agent: string, leaseUntil: number) {
-        this.db.prepare("INSERT OR REPLACE INTO claims (group_key, agent, lease_until) VALUES (?, ?, ?)").run(groupKey, agent, leaseUntil);
+    claim(groupKey: string, agent: string, leaseUntil: number, scope?: string) {
+        this.db.prepare("INSERT OR REPLACE INTO claims (group_key, agent, lease_until, scope) VALUES (?, ?, ?, ?)").run(groupKey, agent, leaseUntil, scope ?? null);
+    }
+
+    putScope(name: string, definition: unknown) {
+        this.db.prepare("INSERT OR REPLACE INTO scopes (name, definition, updated_at) VALUES (?, ?, ?)").run(name, JSON.stringify(definition), now());
+    }
+
+    getScope(name: string): unknown | undefined {
+        const raw = this.getScopeRaw(name);
+        return raw ? JSON.parse(raw) : undefined;
+    }
+
+    getScopeRaw(name: string): string | undefined {
+        return (this.db.prepare("SELECT definition FROM scopes WHERE name = ?").get(name) as { definition: string } | undefined)?.definition;
+    }
+
+    scopeNames(): string[] {
+        return (this.db.prepare("SELECT name FROM scopes ORDER BY name").all() as { name: string }[]).map((r) => r.name);
     }
 
     releaseClaim(groupKey: string, agent: string): boolean {

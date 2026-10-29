@@ -18,6 +18,7 @@ import {
 } from "../polymarket";
 import { Proposal, RequestKey, requestKeyId, scanOracleRange } from "../proposals";
 import { evaluate, Evaluation, needsReview, recheckTime, ReviewPolicy } from "./policy";
+import { compileSelection, describeSelection, needsResolution, parseSelection, resolveSelection, Selection } from "./selection";
 import { GroupRow, now, ProposalContext, ReviewStore, StoredProposal } from "./store";
 
 // Proposals with less time left than this are not handed out: a review would not finish in time.
@@ -64,6 +65,8 @@ export function groupFor(id: string, parsed: ParsedAncillary, market: MarketData
 }
 
 type GroupView = Awaited<ReturnType<ReviewQueue["groupView"]>>;
+type Match = (sp: StoredProposal) => boolean;
+const ALL: Match = () => true;
 
 // Drops the least urgent proposals from a view until it fits in maxChars (always keeping one); returns its size.
 function fitView(view: GroupView, maxChars: number): number {
@@ -119,6 +122,8 @@ export function proposalFlags(
 
 export class ReviewQueue {
     private marketFailures = 0;
+    // Compiled scopes, reused until their stored definition changes (a resolved selection can hold thousands of ids).
+    private scopeCache = new Map<string, { raw: string; match: Match }>();
 
     constructor(private config: Config, readonly store: ReviewStore, private options: QueueOptions, private owner = `pid-${process.pid}`) {}
 
@@ -184,12 +189,49 @@ export class ReviewQueue {
         return new Map(proposals.map((p) => [p.id, evaluate(decisions.get(p.id) ?? [], p.proposal.proposedPrice.toString(), this.options.policy)]));
     }
 
+    // "all" (or no scope) means every proposal; otherwise a selection stored with defineScope / --select.
+    scopeMatch(scope?: string): Match {
+        if (!scope || scope === "all") return ALL;
+        const raw = this.store.getScopeRaw(scope);
+        if (!raw) throw new Error(`Unknown scope "${scope}". Known scopes: ${["all", ...this.store.scopeNames()].join(", ")}`);
+        const cached = this.scopeCache.get(scope);
+        if (cached?.raw === raw) return cached.match;
+        const match = compileSelection(parseSelection(JSON.parse(raw)));
+        this.scopeCache.set(scope, { raw, match });
+        return match;
+    }
+
+    // Stores a selection under its name. Slugs, event slugs and tags are resolved through Gamma first (best effort);
+    // what Gamma cannot answer is reported in "unresolved" and the rest of the selection still applies.
+    async defineScope(input: unknown) {
+        let selection: Selection = parseSelection(input);
+        if (needsResolution(selection)) selection = await resolveSelection(selection);
+        this.store.putScope(selection.name, selection);
+        return this.scopeSummary(selection);
+    }
+
+    private scopeSummary(selection: Selection) {
+        const match = compileSelection(selection);
+        const open = this.store.openProposals(now()).filter(match);
+        const evaluations = this.evaluations(open);
+        return {
+            ...describeSelection(selection),
+            open_proposals_matching: open.length,
+            needing_review: open.filter((sp) => ["pending", "recheck", "needs_confirmation"].includes(evaluations.get(sp.id)!.action)).length,
+        };
+    }
+
+    listScopes() {
+        return this.store.scopeNames().map((name) => this.scopeSummary(parseSelection(this.store.getScope(name))));
+    }
+
     private isSettled(id: string, disputes: ReturnType<ReviewStore["disputes"]>) {
         const status = disputes.get(id)?.status;
         return status === "sending" || status === "disputed" || status === "already-disputed";
     }
 
-    async nextBatch(agent: string, maxProposals: number, maxGroups: number) {
+    async nextBatch(agent: string, maxProposals: number, maxGroups: number, scope?: string) {
+        const match = this.scopeMatch(scope);
         await this.refresh();
         const atTime = now();
         const claimed = this.store.transaction(() => {
@@ -199,7 +241,7 @@ export class ReviewQueue {
             const claims = this.store.claims();
             const groups = new Map<string, { count: number; minExpiry: number }>();
             for (const sp of open) {
-                if (this.isSettled(sp.id, disputes) || !needsReview(evaluations.get(sp.id)!, agent, atTime)) continue;
+                if (!match(sp) || this.isSettled(sp.id, disputes) || !needsReview(evaluations.get(sp.id)!, agent, atTime)) continue;
                 const claim = claims.get(sp.groupKey);
                 if (claim && claim.leaseUntil > atTime && claim.agent !== agent) continue;
                 const group = groups.get(sp.groupKey) ?? { count: 0, minExpiry: Infinity };
@@ -215,7 +257,7 @@ export class ReviewQueue {
                 if (picked.length >= maxGroups || proposals >= maxProposals) break;
                 picked.push(key);
                 proposals += group.count;
-                this.store.claim(key, agent, atTime + this.options.leaseSeconds);
+                this.store.claim(key, agent, atTime + this.options.leaseSeconds, scope);
             }
             return picked;
         });
@@ -224,7 +266,7 @@ export class ReviewQueue {
         let chars = 0;
         let budget = maxProposals;
         for (const key of claimed) {
-            const view = budget > 0 && chars < MAX_BATCH_CHARS ? await this.groupView(key, agent, budget) : undefined;
+            const view = budget > 0 && chars < MAX_BATCH_CHARS ? await this.groupView(key, agent, budget, match) : undefined;
             const viewChars = view ? fitView(view, MAX_BATCH_CHARS - chars) : 0;
             if (!view || view.proposals.length === 0 || (groups.length > 0 && chars + viewChars > MAX_BATCH_CHARS)) {
                 this.store.releaseClaim(key, agent); // claimed but not shown: give it back now, not after the lease
@@ -236,9 +278,10 @@ export class ReviewQueue {
         }
         return {
             agent,
+            scope: scope ?? "all",
             lease_seconds: this.options.leaseSeconds,
             groups,
-            queue: this.progress(),
+            queue: this.progress(scope),
             ...(groups.length === 0 ? { note: "Nothing needs review right now. Call next_batch again later; unclear verdicts come back when their re-check time passes." } : {}),
         ...(groups.some((g) => g.not_shown_needing_review > 0)
             ? { split_groups: "Some groups were too large for one batch. Submit what you have; the claim stays yours and next_batch returns the rest." }
@@ -268,12 +311,12 @@ export class ReviewQueue {
 
     // Full detail for up to `limit` members the agent still has to review (most urgent first); the rest of the group
     // is listed compactly in other_markets for context.
-    async groupView(groupKey: string, agent: string, limit = Infinity) {
+    async groupView(groupKey: string, agent: string, limit = Infinity, match: Match = ALL) {
         const atTime = now();
         const group = this.store.getGroup(groupKey);
         const open = this.store.groupProposals(groupKey).filter((sp) => sp.status === "open" && sp.proposal.proposalExpirationTimestamp.toNumber() > atTime);
         const evaluations = this.evaluations(open);
-        const pending = open.filter((sp) => needsReview(evaluations.get(sp.id)!, agent, atTime));
+        const pending = open.filter((sp) => match(sp) && needsReview(evaluations.get(sp.id)!, agent, atTime));
         const shown = new Set(pending.slice(0, limit).map((sp) => sp.id));
         await this.ensureContext(open.filter((sp) => shown.has(sp.id)));
         const fresh = new Map(this.store.groupProposals(groupKey).map((sp) => [sp.id, sp]));
@@ -295,6 +338,7 @@ export class ReviewQueue {
                 title: sp.context.parsed.title,
                 proposed: describePrice(sp.proposal.proposedPrice, sp.context.parsed),
                 status: evaluations.get(sp.id)!.action,
+                ...(match(sp) ? {} : { outside_scope: true }),
             })),
             ...(others.length > MAX_OTHER_MARKETS ? { other_markets_omitted: others.length - MAX_OTHER_MARKETS } : {}),
         };
@@ -345,6 +389,7 @@ export class ReviewQueue {
             const group = this.store.getGroup(groupKey);
             if (!group) throw new Error(`Unknown group ${groupKey}`);
             const claim = this.store.claims().get(groupKey);
+            const match = claim?.agent === agent ? this.scopeMatch(claim.scope) : ALL;
             if (claim && claim.agent !== agent && claim.leaseUntil > atTime) throw new Error(`Group ${groupKey} is claimed by ${claim.agent}; call next_batch to get your own work.`);
             if (verdicts.length === 0) throw new Error("Submit at least one verdict.");
 
@@ -391,7 +436,7 @@ export class ReviewQueue {
                 };
             });
 
-            const stillPending = [...members.values()].some((sp) => sp.status === "open" && needsReview(this.evaluations([sp]).get(sp.id)!, agent, atTime));
+            const stillPending = [...members.values()].some((sp) => sp.status === "open" && match(sp) && needsReview(this.evaluations([sp]).get(sp.id)!, agent, atTime));
             if (!stillPending) this.store.releaseClaim(groupKey, agent);
             return { review_id: reviewId, results, claim_released: !stillPending };
         });
@@ -406,8 +451,8 @@ export class ReviewQueue {
     }
 
     // Open proposals whose review says dispute and that haven't been sent yet.
-    candidates() {
-        const open = this.store.openProposals(now() + 20);
+    candidates(scope?: string) {
+        const open = this.store.openProposals(now() + 20).filter(this.scopeMatch(scope));
         const evaluations = this.evaluations(open);
         const disputes = this.store.disputes();
         return open
@@ -415,9 +460,9 @@ export class ReviewQueue {
             .map((sp) => ({ stored: sp, evaluation: evaluations.get(sp.id)! }));
     }
 
-    progress() {
+    progress(scope?: string) {
         const atTime = now();
-        const open = this.store.openProposals(atTime);
+        const open = this.store.openProposals(atTime).filter(this.scopeMatch(scope));
         const evaluations = this.evaluations(open);
         const disputes = this.store.disputes();
         const claims = this.store.claims();
@@ -437,9 +482,10 @@ export class ReviewQueue {
         const disputeStatus: Record<string, number> = {};
         for (const d of disputes.values()) disputeStatus[d.status] = (disputeStatus[d.status] ?? 0) + 1;
         return {
+            scope: scope ?? "all",
             open_proposals: open.length,
             by_status: counts,
-            dispute_candidates_not_sent: this.candidates().length,
+            dispute_candidates_not_sent: this.candidates(scope).length,
             disputes: disputeStatus,
             active_claims: [...claims.values()].filter((c) => c.leaseUntil > atTime).length,
             unresolved_expiring: atRisk,
@@ -448,9 +494,9 @@ export class ReviewQueue {
         };
     }
 
-    atRisk(minutes: number) {
+    atRisk(minutes: number, scope?: string) {
         const atTime = now();
-        const open = this.store.openProposals(atTime).filter((sp) => sp.proposal.proposalExpirationTimestamp.toNumber() - atTime < minutes * 60);
+        const open = this.store.openProposals(atTime).filter(this.scopeMatch(scope)).filter((sp) => sp.proposal.proposalExpirationTimestamp.toNumber() - atTime < minutes * 60);
         const evaluations = this.evaluations(open);
         const disputes = this.store.disputes();
         return open
@@ -461,9 +507,9 @@ export class ReviewQueue {
             .map((sp) => this.summary(sp, evaluations.get(sp.id)!, atTime));
     }
 
-    list(limit: number, onlyUnresolved: boolean) {
+    list(limit: number, onlyUnresolved: boolean, scope?: string) {
         const atTime = now();
-        const open = this.store.openProposals(atTime);
+        const open = this.store.openProposals(atTime).filter(this.scopeMatch(scope));
         const evaluations = this.evaluations(open);
         return open
             .filter((sp) => !onlyUnresolved || evaluations.get(sp.id)!.action !== "agree")
