@@ -2,6 +2,7 @@ import { repoPath, userPath } from "../paths";
 import { Config } from "../config";
 import { ReviewPolicy } from "./policy";
 import { ReviewQueue } from "./queue";
+import { BUILTIN_SCOPES } from "./selection";
 import { ReviewStore } from "./store";
 
 export interface ReviewFlags {
@@ -30,6 +31,7 @@ export function openReview(config: Config, flags: ReviewFlags) {
     if (!(policy.minConfidence > 0 && policy.minConfidence <= 1)) throw new Error("--min-confidence must be in (0, 1]");
     if (!(Number.isInteger(policy.minConfirmations) && policy.minConfirmations >= 1)) throw new Error("--confirmations must be an integer >= 1");
     store.setMeta("policy", JSON.stringify(policy));
+    for (const scope of BUILTIN_SCOPES) store.putScope(scope.name, scope);
 
     const queue = new ReviewQueue(config, store, {
         policy,

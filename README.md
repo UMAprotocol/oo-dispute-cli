@@ -106,9 +106,14 @@ process, and it keeps a shared queue in `.oo-dispute/review-137.sqlite` in this 
 2. **Check `.oo-dispute/mcp.env`** if it already existed: it must not still point at a fork from an earlier rehearsal.
 3. **Open a new session in this folder** (Claude Code or Codex) and ask: *"call `progress` on oo-dispute"*. The
    first call scans the chain and can take a few minutes. The server runs with `--only-polymarket`.
-4. **Start the review**, for example: *"Run the dispute-review prompt with three dispute-reviewer subagents in
-   parallel on scope midterms-2026."* The `dispute-reviewer` subagent only has the review tools and web search, with
-   no shell. Prefer a strong model for real decisions.
+4. **Start the review** with the `/review-disputes` command (Codex: `/prompts:review-disputes`), optionally with a
+   scope, a group limit and a number of parallel reviewers, for example `/review-disputes permissionless 20 3`. A plain
+   *"revisa las propuestas en liveness"* works too.
+   - **Scopes:** `permissionless` (the OOv2, where the midterms are and liveness is final), `managed` (the Managed
+     OOv2, disputable until settled), `midterms-2026` and `all`.
+   - **Reviewers:** in Claude Code the command launches `dispute-reviewer` subagents, which only have the review
+     tools and web search, with no shell. In Codex, open several sessions to review in parallel. Prefer a strong
+     model for real decisions.
 5. **Send the disputes** from a terminal, with the same `CHAIN_ID`/RPC and your key. It shares the agents' queue,
    `.oo-dispute/review-137.sqlite` in this repo, from whatever folder you run it:
    ```bash

@@ -51,6 +51,13 @@ export const SelectionSchema = z
 export type Selection = z.infer<typeof SelectionSchema>;
 type CriteriaT = z.infer<typeof Criteria>;
 
+// Scopes every queue has, so agents and `apply` can split the work by oracle without defining them. The midterms are
+// on the permissionless OOv2, where liveness is final; Managed OOv2 proposals stay disputable until settled.
+export const BUILTIN_SCOPES: Selection[] = [
+    { name: "permissionless", oracle: ["oov2"] },
+    { name: "managed", oracle: ["managed"] },
+].map(parseSelection);
+
 export function parseSelection(input: unknown): Selection {
     const result = SelectionSchema.safeParse(input);
     if (!result.success) {

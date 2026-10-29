@@ -9,10 +9,16 @@ Polygon) when the usual services are down. Agents **review** proposals. Humans *
 The `oo-dispute` MCP server keeps a shared review queue on disk. Several agents can work on it at once. Its settings
 come from `.oo-dispute/mcp.env` in this repo; see [Setup](#setup-claude-code-and-codex) if its tools are missing.
 
+A short request such as "review the proposals", "revisa las propuestas en liveness" or `/review-disputes` means:
+follow [.claude/commands/review-disputes.md](.claude/commands/review-disputes.md). That is, review every open
+proposal in the scope (default: the server's) until the queue is empty or the user's limit is reached, then show
+`progress` and `dispute_candidates`. The steps:
+
 1. Call `review_policy` and follow it. Call `progress` to see the queue. The first call scans the chain and may take
    minutes.
 2. If the user wants only some markets, use a scope:
-   - `list_scopes` shows what exists; `midterms-2026` is loaded when `REVIEW_SELECTION` points at
+   - `list_scopes` shows what exists. `permissionless` (OOv2, liveness is final) and `managed` (Managed OOv2,
+     disputable until settled) are always there; `midterms-2026` is loaded when `REVIEW_SELECTION` points at
      `selections/midterms-2026.resolved.json`;
    - `define_scope` creates one.
 
