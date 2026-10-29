@@ -16,7 +16,7 @@ import {
     VERDICTS,
     verdictPrice,
 } from "../polymarket";
-import { Proposal, RequestKey, requestKeyId, scanOracleRange } from "../proposals";
+import { disputableAfterLiveness, Proposal, RequestKey, requestKeyId, scanOracleRange } from "../proposals";
 import { evaluate, Evaluation, needsReview, recheckTime, ReviewPolicy } from "./policy";
 import { compileSelection, describeSelection, EventGroup, needsResolution, parseSelection, resolveSelection, Selection } from "./selection";
 import { GroupRow, now, ProposalContext, ReviewStore, StoredProposal } from "./store";
@@ -117,7 +117,9 @@ export function proposalFlags(
         const quote = market.prices?.find((p) => p.outcome.toLowerCase() === label);
         if (quote && quote.price < 0.2) flags.push("market_disagrees_with_proposal");
     }
-    if (sp.proposal.proposalExpirationTimestamp.toNumber() - atTime < 30 * 60) flags.push("expires_within_30_min");
+    const left = sp.proposal.proposalExpirationTimestamp.toNumber() - atTime;
+    if (left <= 0 && disputableAfterLiveness(sp.proposal.oracleKind)) flags.push("liveness_ended_disputable_until_settled");
+    else if (left < 30 * 60) flags.push("expires_within_30_min");
     if (proposerCount <= 2) flags.push("rare_proposer");
     if (updates?.updates.length) flags.push("creator_updates_present");
     return flags;
@@ -154,6 +156,7 @@ export class ReviewQueue {
                 const scan = await scanOracleRange(config, oracle, fromBlock, block.number, block.timestamp);
                 added += await this.ingest(scan.proposals);
                 store.markDisputed(scan.disputedIds.map((key) => `p_${sha(key)}`));
+                store.markSettled(scan.settledIds.map((key) => `p_${sha(key)}`));
                 // A failed load must be retried by the next scan, so only advance past ranges that loaded fully.
                 if (scan.failed === 0) store.setMeta(key, String(block.number));
             }
@@ -237,6 +240,7 @@ export class ReviewQueue {
             ...describeSelection(selection),
             open_proposals_matching: open.length,
             needing_review: open.filter((sp) => ["pending", "recheck", "needs_confirmation"].includes(evaluations.get(sp.id)!.action)).length,
+            conflicts: open.filter((sp) => evaluations.get(sp.id)!.action === "conflict").length,
         };
     }
 
@@ -333,7 +337,9 @@ export class ReviewQueue {
     async groupView(groupKey: string, agent: string, limit = Infinity, match: Match = ALL) {
         const atTime = now();
         const group = this.store.getGroup(groupKey);
-        const open = this.store.groupProposals(groupKey).filter((sp) => sp.status === "open" && sp.proposal.proposalExpirationTimestamp.toNumber() > atTime);
+        const open = this.store
+            .groupProposals(groupKey)
+            .filter((sp) => sp.status === "open" && (sp.proposal.proposalExpirationTimestamp.toNumber() > atTime || disputableAfterLiveness(sp.proposal.oracleKind)));
         const evaluations = this.evaluations(open);
         const pending = open.filter((sp) => match(sp) && needsReview(evaluations.get(sp.id)!, agent, atTime));
         const shown = new Set(pending.slice(0, limit).map((sp) => sp.id));
@@ -418,7 +424,7 @@ export class ReviewQueue {
                 const sp = members.get(v.proposal_id);
                 if (!sp) throw new Error(`${v.proposal_id} is not in group ${groupKey}`);
                 if (sp.status !== "open") throw new Error(`${v.proposal_id} is no longer open (already disputed)`);
-                if (sp.proposal.proposalExpirationTimestamp.toNumber() <= atTime) throw new Error(`${v.proposal_id} has expired`);
+                if (sp.proposal.proposalExpirationTimestamp.toNumber() <= atTime && !disputableAfterLiveness(sp.proposal.oracleKind)) throw new Error(`${v.proposal_id} has expired`);
                 if (v.seen_proposed_price !== sp.proposal.proposedPrice.toString()) {
                     throw new Error(`${v.proposal_id}: seen_proposed_price ${v.seen_proposed_price} does not match the proposal (${sp.proposal.proposedPrice}). Re-read it with next_batch or get_proposal.`);
                 }
@@ -480,18 +486,31 @@ export class ReviewQueue {
             .map((sp) => ({ stored: sp, evaluation: evaluations.get(sp.id)! }));
     }
 
+    // Proposals where confident reviewers disagree with each other: never sent automatically, a human decides.
+    conflicts(scope?: string) {
+        const atTime = now();
+        const open = this.store.openProposals(atTime).filter(this.scopeMatch(scope));
+        const evaluations = this.evaluations(open);
+        return open
+            .filter((sp) => evaluations.get(sp.id)!.action === "conflict")
+            .map((sp) => {
+                const evaluation = evaluations.get(sp.id)!;
+                return { stored: sp, evaluation, summary: { ...this.summary(sp, evaluation, atTime), agents: this.store.decisionDetails(sp.id) } };
+            });
+    }
+
     progress(scope?: string) {
         const atTime = now();
         const open = this.store.openProposals(atTime).filter(this.scopeMatch(scope));
         const evaluations = this.evaluations(open);
         const disputes = this.store.disputes();
         const claims = this.store.claims();
-        const counts: Record<string, number> = { pending: 0, recheck: 0, agree: 0, needs_confirmation: 0, dispute: 0 };
+        const counts: Record<string, number> = { pending: 0, recheck: 0, agree: 0, needs_confirmation: 0, dispute: 0, conflict: 0 };
         const atRisk = { under_15_min: 0, under_30_min: 0, under_60_min: 0 };
         for (const sp of open) {
             const action = evaluations.get(sp.id)!.action;
             counts[action]++;
-            const unresolved = action === "pending" || action === "recheck" || action === "needs_confirmation" || (action === "dispute" && !this.isSettled(sp.id, disputes));
+            const unresolved = action === "pending" || action === "recheck" || action === "needs_confirmation" || action === "conflict" || (action === "dispute" && !this.isSettled(sp.id, disputes));
             const left = sp.proposal.proposalExpirationTimestamp.toNumber() - atTime;
             if (unresolved && left < 60 * 60) {
                 atRisk.under_60_min++;

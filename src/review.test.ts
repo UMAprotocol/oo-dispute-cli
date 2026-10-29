@@ -222,3 +222,27 @@ test("expired leases return work to the queue", async () => {
     store.db.prepare("UPDATE claims SET lease_until = ?").run(now() - 1);
     assert.equal((await queue.nextBatch("r2", 20, 1)).groups.length, 1);
 });
+
+test("a confident dissent among the latest per-agent verdicts blocks a dispute, whatever the order", () => {
+    const policy = { minConfidence: 0.8, minConfirmations: 2 };
+    const proposed = ethers.constants.WeiPerEther.toString(); // proposed Yes (p2)
+    const d = (agent: string, verdict: "p1" | "p2" | "unclear", createdAt: number, confidence = 0.95) => ({
+        agent,
+        verdict,
+        verdictPrice: verdict === "p1" ? "0" : verdict === "p2" ? proposed : undefined,
+        confidence,
+        createdAt,
+    });
+    // A says No, B agrees with the proposal (Yes), C says No: a conflict whoever voted last.
+    for (const order of [["A", "B", "C"], ["A", "C", "B"], ["B", "A", "C"]]) {
+        const verdicts: Record<string, "p1" | "p2"> = { A: "p1", B: "p2", C: "p1" };
+        const evaluation = evaluate(order.map((agent, i) => d(agent, verdicts[agent], i)), proposed, policy);
+        assert.equal(evaluation.action, "conflict", `order ${order.join("")}`);
+        assert.equal(needsReview(evaluation, "D", 100), false, "a conflict waits for a human, it does not cycle through reviewers");
+    }
+    // Unanimity still decides; a dissenter that later goes unclear or low-confidence no longer blocks.
+    assert.equal(evaluate([d("A", "p1", 1), d("C", "p1", 2)], proposed, policy).action, "dispute");
+    assert.equal(evaluate([d("A", "p2", 1), d("B", "p2", 2)], proposed, policy).action, "agree");
+    assert.equal(evaluate([d("B", "p2", 1), d("A", "p1", 2), d("C", "p1", 3), d("B", "p1", 4)], proposed, policy).action, "dispute", "B changed its mind");
+    assert.equal(evaluate([d("B", "p2", 1, 0.5), d("A", "p1", 2), d("C", "p1", 3)], proposed, policy).action, "dispute", "a low-confidence agreement is not a dissent");
+});

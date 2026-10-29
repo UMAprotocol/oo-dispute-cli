@@ -60,7 +60,9 @@ from one template. Establish the event for each market from its own title.
 ## Flags
 \`multiple_yes_in_exclusive_group\` (at least one of those Yes proposals is wrong), \`market_disagrees_with_proposal\`,
 \`proposed_too_early\`, \`proposed_50_50\`, \`proposed_price_not_in_res_data\`, \`rare_proposer\`,
-\`creator_updates_present\`, \`expires_within_30_min\`. They are hints for where to look harder, not verdicts.
+\`creator_updates_present\`, \`expires_within_30_min\`, \`liveness_ended_disputable_until_settled\` (Managed OOv2: liveness is over
+but the proposal can still be disputed until the resolver settles it, which can happen at any moment: treat it as the
+most urgent). They are hints for where to look harder, not verdicts.
 
 ## Elections
 - The market's rules define what settles it: often a call by named outlets (e.g. AP), sometimes certification.
@@ -87,12 +89,14 @@ You coordinate the review of open UMA Optimistic Oracle proposals with the oo-di
    Without subagents, follow \`review_policy\` yourself in the same loop.
 3. While they work, check \`progress\` and \`at_risk\`. If \`unresolved_expiring\` grows, start more reviewers or
    review the at-risk proposals yourself first.
-4. Proposals whose reviews say "dispute" appear in \`dispute_candidates\`. You cannot send disputes: a human runs
+4. If reviewers disagree with each other with confidence, the proposal becomes a \`conflict\`: it is never sent
+   automatically. Tell the user; a reviewer that re-checks and changes its verdict resolves it.
+5. Proposals whose reviews say "dispute" appear in \`dispute_candidates\`. You cannot send disputes: a human runs
    \`yarn apply --watch\` in a terminal, which re-checks them on chain and asks before sending.
-5. Markets are grouped by Polymarket event, and large groups are split across batches automatically. If grouping is
+6. Markets are grouped by Polymarket event, and large groups are split across batches automatically. If grouping is
    still wrong (markets about the same event in different groups), fix it with \`regroup\`, preferably before
    reviewers claim those markets: a reviewer holding the old group can no longer submit for regrouped proposals.
-6. If a reviewer stops early, release everything it holds with \`release_claim\` and its agent name, no group_key.
+7. If a reviewer stops early, release everything it holds with \`release_claim\` and its agent name, no group_key.
 `;
 
 export const SERVER_INSTRUCTIONS = `Tools to review open UMA Optimistic Oracle proposals and record verdicts in a shared local queue.

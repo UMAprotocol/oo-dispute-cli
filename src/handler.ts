@@ -4,7 +4,7 @@ import { DISPUTE_CONFIRMATION_PROMPT } from './constants';
 import { withRetry } from './concurrency';
 import { describeProposal, DisputeEngine, DisputeOutcome, DisputeStatus } from './dispute';
 import { displayProposalInfo, isYesAnswer } from './display';
-import { fetchProposals, Proposal } from './proposals';
+import { disputableAfterLiveness, fetchProposals, Proposal } from './proposals';
 
 export interface Options {
     multiplier: string;
@@ -71,7 +71,7 @@ async function run(options: Options, ask: (question: string) => Promise<string>)
             console.log('⏰ A queued proposal expires soon; sending the queue now.');
             await flush();
         }
-        if (proposal.proposalExpirationTimestamp.lte(now)) {
+        if (proposal.proposalExpirationTimestamp.lte(now) && !disputableAfterLiveness(proposal.oracleKind)) {
             console.log(`⌛ Skipping expired proposal ${describeProposal(proposal)}`);
             continue;
         }

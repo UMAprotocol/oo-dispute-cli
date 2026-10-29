@@ -12,8 +12,9 @@ export interface DecisionRecord {
 
 // pending: nobody has reviewed it. recheck: unclear or low confidence, look again later. agree: verdict matches the
 // proposal. needs_confirmation: a confident disagreement still short of the required independent reviewers.
-// dispute: confident disagreement confirmed by enough reviewers.
-export type Action = "pending" | "recheck" | "agree" | "needs_confirmation" | "dispute";
+// dispute: confident disagreement confirmed by enough reviewers. conflict: confident reviewers disagree with each other;
+// never disputed automatically, it needs a human (or a dissenting reviewer changing its verdict).
+export type Action = "pending" | "recheck" | "agree" | "needs_confirmation" | "dispute" | "conflict";
 
 export interface ReviewPolicy {
     minConfidence: number;
@@ -24,6 +25,7 @@ export interface Evaluation {
     action: Action;
     verdict?: Verdict;
     confirmingAgents: string[];
+    dissentingAgents?: string[];
     recheckAfter?: number;
 }
 
@@ -41,13 +43,22 @@ export function evaluate(decisions: DecisionRecord[], proposedPrice: string, pol
     if (latest.verdict === "unclear" || latest.confidence < policy.minConfidence) {
         return { action: "recheck", verdict: latest.verdict, confirmingAgents: [], recheckAfter: latest.recheckAfter };
     }
+
+    // Every reviewer's latest confident verdict counts, whatever the order: any confident dissent blocks a dispute.
+    const confident = latestPerAgent(decisions).filter((d) => d.verdict !== "unclear" && d.confidence >= policy.minConfidence);
+    if (new Set(confident.map((d) => d.verdict)).size > 1) {
+        return {
+            action: "conflict",
+            verdict: latest.verdict,
+            confirmingAgents: confident.filter((d) => d.verdict === latest.verdict).map((d) => d.agent),
+            dissentingAgents: confident.filter((d) => d.verdict !== latest.verdict).map((d) => d.agent),
+        };
+    }
     if (latest.verdictPrice === proposedPrice) {
-        return { action: "agree", verdict: latest.verdict, confirmingAgents: [latest.agent] };
+        return { action: "agree", verdict: latest.verdict, confirmingAgents: confident.map((d) => d.agent) };
     }
 
-    const confirmingAgents = latestPerAgent(decisions)
-        .filter((d) => d.verdict === latest.verdict && d.confidence >= policy.minConfidence)
-        .map((d) => d.agent);
+    const confirmingAgents = confident.map((d) => d.agent);
     return {
         action: confirmingAgents.length >= policy.minConfirmations ? "dispute" : "needs_confirmation",
         verdict: latest.verdict,

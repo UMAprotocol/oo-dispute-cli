@@ -1,5 +1,5 @@
 import { paginatedEventQuery } from "@uma/common";
-import { DisputePriceEvent, ProposePriceEvent } from "@uma/contracts-node/dist/packages/contracts-node/typechain/core/ethers/OptimisticOracleV2";
+import { DisputePriceEvent, ProposePriceEvent, SettleEvent } from "@uma/contracts-node/dist/packages/contracts-node/typechain/core/ethers/OptimisticOracleV2";
 import { BigNumber } from "ethers";
 import { Config, OracleConfig, OracleKind, SortOrder } from "./config";
 import { POLYMARKET_REQUESTER_ADDRESSES } from "./constants";
@@ -40,19 +40,25 @@ export function requestKeyArgs(key: RequestKey): [string, string, BigNumber, str
 
 type ProposeArgs = RequestKey & { expirationTimestamp: BigNumber };
 
-// Proposals that are still disputable: not already disputed, not expired and, optionally, from Polymarket.
+// Managed OOv2 keeps an expired proposal disputable until its permissioned resolver settles it
+// (ManagedOptimisticOracleV2._getStateForDispute maps Expired to Proposed); on the OOv2 liveness is final.
+export const disputableAfterLiveness = (kind: OracleKind) => kind === "managed";
+
+// Proposals that are still disputable: not disputed or settled, within liveness (or past it on the Managed OOv2)
+// and, optionally, from Polymarket.
 export function filterOpenProposals<T extends { args: ProposeArgs }>(
     proposeEvents: T[],
     disputeEvents: { args: RequestKey }[],
     currentTimestamp: number,
-    onlyPolymarket: boolean
+    onlyPolymarket: boolean,
+    { keepExpired = false, settleEvents = [] as { args: RequestKey }[] } = {}
 ): T[] {
-    const disputed = new Set(disputeEvents.map((event) => requestKeyId(event.args)));
+    const closed = new Set([...disputeEvents, ...settleEvents].map((event) => requestKeyId(event.args)));
     const polymarket = new Set(POLYMARKET_REQUESTER_ADDRESSES.map((r) => r.toLowerCase()));
     return proposeEvents
         .filter((event) => !onlyPolymarket || polymarket.has(event.args.requester.toLowerCase()))
-        .filter((event) => !disputed.has(requestKeyId(event.args)))
-        .filter((event) => event.args.expirationTimestamp.gt(currentTimestamp));
+        .filter((event) => !closed.has(requestKeyId(event.args)))
+        .filter((event) => keepExpired || event.args.expirationTimestamp.gt(currentTimestamp));
 }
 
 // Fisher-Yates; `sort(() => Math.random() - 0.5)` is biased.
@@ -100,11 +106,14 @@ export async function scanOracleRange(config: Config, oracle: OracleConfig, from
     const searchConfig = { fromBlock: Math.max(0, fromBlock), toBlock, maxBlockLookBack: config.maxBlockLookBack };
     const oo = await getOOV2ContractInstance(config.provider, oracle.address);
 
-    const [proposeEvents, disputeEvents] = await Promise.all([
+    const keepExpired = disputableAfterLiveness(oracle.kind);
+    const [proposeEvents, disputeEvents, settleEvents] = await Promise.all([
         withRetry(() => paginatedEventQuery<ProposePriceEvent>(oo, oo.filters.ProposePrice(null, null, null, null, null, null, null, null), searchConfig)),
         withRetry(() => paginatedEventQuery<DisputePriceEvent>(oo, oo.filters.DisputePrice(null, null, null, null, null, null, null), searchConfig)),
+        // Only needed where proposals outlive their liveness: there, settlement is what closes them.
+        keepExpired ? withRetry(() => paginatedEventQuery<SettleEvent>(oo, oo.filters.Settle(null, null, null, null, null, null, null, null), searchConfig)) : Promise.resolve([] as SettleEvent[]),
     ]);
-    const events = filterOpenProposals(proposeEvents, disputeEvents, currentTimestamp, config.onlyPolymarket);
+    const events = filterOpenProposals(proposeEvents, disputeEvents, currentTimestamp, config.onlyPolymarket, { keepExpired, settleEvents });
 
     let failed = 0;
     const loaded = await mapWithConcurrency(events, config.rpcConcurrency, async (event) => {
@@ -140,6 +149,7 @@ export async function scanOracleRange(config: Config, oracle: OracleConfig, from
     return {
         proposals: loaded.filter((p): p is Proposal => p !== undefined),
         disputedIds: disputeEvents.map((event) => requestKeyId(event.args)),
+        settledIds: settleEvents.map((event) => requestKeyId(event.args)),
         failed,
     };
 }

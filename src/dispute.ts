@@ -6,7 +6,7 @@ import { BATCH_GAS_OVERHEAD, EXPIRY_SAFETY_MARGIN_SECONDS, RequestState } from "
 import { chunk, mapWithConcurrency, withRetry } from "./concurrency";
 import { getDisputeBatcherInstance, getERC20ContractInstance, getOOV2ContractInstance } from "./contracts";
 import { getGasFeeOverride } from "./gas";
-import { Proposal, requestKeyArgs, requestKeyId } from "./proposals";
+import { disputableAfterLiveness, Proposal, requestKeyArgs, requestKeyId } from "./proposals";
 
 export type DisputeStatus = "disputed" | "already-disputed" | "skipped" | "failed" | "dry-run";
 
@@ -32,6 +32,14 @@ const STATUS_ICONS: Record<DisputeStatus, string> = {
     failed: "🚨",
     "dry-run": "🧪",
 };
+
+// Whether a request can still be disputed now. getState reports Expired once liveness ends, but the Managed OOv2 accepts
+// disputes until its resolver settles (it maps Expired to Proposed for disputes); on the OOv2 there is also a safety
+// margin, since a transaction sent seconds before expiry would likely land too late.
+export function disputable(kind: Proposal["oracleKind"], state: RequestState, settled: boolean, expiration: number, now: number): boolean {
+    if (disputableAfterLiveness(kind)) return !settled && (state === RequestState.Proposed || state === RequestState.Expired);
+    return state === RequestState.Proposed && expiration > now + EXPIRY_SAFETY_MARGIN_SECONDS;
+}
 
 export function describeProposal(proposal: Proposal): string {
     return `${proposal.oracleKind} ${proposal.requester.slice(0, 10)}… ts=${proposal.timestamp.toString()} id=${ethers.utils.parseBytes32String(proposal.identifier)}`;
@@ -114,7 +122,12 @@ export class DisputeEngine {
         for (const { transport, proposals: group } of groups.values()) {
             const sorted = [...group].sort((a, b) => (a.proposalExpirationTimestamp.lt(b.proposalExpirationTimestamp) ? -1 : 1));
             for (const batch of chunk(sorted, this.config.batchSize)) {
-                outcomes.push(...(await this.processChunk(transport, batch, true)));
+                // One failing chunk (RPC still down after retries, fee lookup...) must not lose the outcomes of the others.
+                try {
+                    outcomes.push(...(await this.processChunk(transport, batch, true)));
+                } catch (error) {
+                    outcomes.push(...batch.map((proposal) => this.log({ proposal, status: "failed", detail: errorText(error) })));
+                }
             }
         }
         return outcomes;
@@ -187,10 +200,9 @@ export class DisputeEngine {
                 const [state, request] = await Promise.all([withRetry(() => oo.getState(...args)), withRetry(() => oo.getRequest(...args))]);
                 if (state === RequestState.Disputed) {
                     done.push(this.log({ proposal, status: "already-disputed", detail: `disputer ${request.disputer}` }));
-                } else if (state !== RequestState.Proposed) {
-                    done.push(this.log({ proposal, status: "skipped", detail: `state is ${RequestState[state]}` }));
-                } else if (request.expirationTime.lte(now + EXPIRY_SAFETY_MARGIN_SECONDS)) {
-                    done.push(this.log({ proposal, status: "skipped", detail: `expires in ${request.expirationTime.toNumber() - now}s, too late to send` }));
+                } else if (!disputable(proposal.oracleKind, state, request.settled, request.expirationTime.toNumber(), now)) {
+                    const late = state === RequestState.Proposed;
+                    done.push(this.log({ proposal, status: "skipped", detail: late ? `expires in ${request.expirationTime.toNumber() - now}s, too late to send` : `state is ${RequestState[state]}` }));
                 } else {
                     ready.push({ proposal, totalBond: request.requestSettings.bond.add(request.finalFee) });
                 }
@@ -319,21 +331,33 @@ export class DisputeEngine {
 
         for (const { proposal } of items) {
             const args = requestKeyArgs(proposal);
+            const fail = (error: unknown) => {
+                errors.set(requestKeyId(proposal), errorText(error));
+                notSent.push(proposal);
+            };
+            let estimate: BigNumber;
             try {
-                const estimate = await oo.estimateGas.disputePrice(...args);
-                if (config.dryRun) {
-                    outcomes.push(this.log({ proposal, status: "dry-run", detail: `would dispute directly (gas ~${estimate})` }));
-                    continue;
-                }
+                // A revert here (already disputed, expired...) never uses a nonce.
+                estimate = await oo.estimateGas.disputePrice(...args);
+            } catch (error) {
+                fail(error);
+                continue;
+            }
+            if (config.dryRun) {
+                outcomes.push(this.log({ proposal, status: "dry-run", detail: `would dispute directly (gas ~${estimate})` }));
+                continue;
+            }
+            try {
                 const tx = await oo.disputePrice(...args, { ...fees, gasLimit: estimate.mul(13).div(10), nonce });
                 nonce++;
                 console.log(`📤 Sent dispute in ${tx.hash}`);
                 sent.push({ proposal, tx });
             } catch (error) {
-                errors.set(requestKeyId(proposal), errorText(error));
-                notSent.push(proposal);
-                // The failed send may or may not have used the nonce.
-                if (!config.dryRun) nonce = await withRetry(() => config.wallet.getTransactionCount("pending"));
+                fail(error);
+                // The failed send may or may not have used the nonce. A lagging node can under-count the transactions
+                // this loop already sent, so never move backwards.
+                const pending = await withRetry(() => config.wallet.getTransactionCount("pending")).catch(() => nonce);
+                nonce = Math.max(nonce, pending);
             }
         }
 
@@ -393,10 +417,11 @@ export class DisputeEngine {
                 if (state === RequestState.Disputed) {
                     const byUs = request.disputer.toLowerCase() === wallet;
                     outcomes.push(this.log({ proposal, status: byUs ? "disputed" : "already-disputed", detail: byUs ? undefined : `disputer ${request.disputer}`, txHash: byUs ? hash : undefined }));
-                } else if (state === RequestState.Proposed && request.expirationTime.gt(now + EXPIRY_SAFETY_MARGIN_SECONDS) && !error) {
+                } else if (disputable(proposal.oracleKind, state, request.settled, request.expirationTime.toNumber(), now) && !error) {
                     retry.push(proposal);
                 } else {
-                    outcomes.push(this.log({ proposal, status: state === RequestState.Proposed ? "failed" : "skipped", detail: error ?? `state is ${RequestState[state]}` }));
+                    const stillOpen = disputable(proposal.oracleKind, state, request.settled, request.expirationTime.toNumber(), now);
+                    outcomes.push(this.log({ proposal, status: stillOpen ? "failed" : "skipped", detail: error ?? `state is ${RequestState[state]}` }));
                 }
             } catch (readError) {
                 outcomes.push(this.log({ proposal, status: "failed", detail: `${error ? `${error}; ` : ""}could not read state: ${errorText(readError)}` }));

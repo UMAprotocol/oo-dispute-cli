@@ -19,7 +19,7 @@ export interface StoredProposal {
     id: string;
     proposal: Proposal;
     groupKey: string;
-    status: "open" | "disputed";
+    status: "open" | "disputed" | "settled";
     context: ProposalContext;
     firstSeen: number;
 }
@@ -192,6 +192,11 @@ export class ReviewStore {
         for (const id of ids) statement.run(id);
     }
 
+    markSettled(ids: string[]) {
+        const statement = this.db.prepare("UPDATE proposals SET status = 'settled' WHERE id = ? AND status = 'open'");
+        for (const id of ids) statement.run(id);
+    }
+
     private toStored(row: Record<string, unknown>): StoredProposal {
         return {
             id: row.id as string,
@@ -208,9 +213,14 @@ export class ReviewStore {
         return row ? this.toStored(row) : undefined;
     }
 
-    // Open proposals that haven't expired yet.
+    // Proposals that can still be disputed: within liveness, or past it on the Managed OOv2 until a Settle event marks
+    // them settled (its resolver settles; until then ManagedOptimisticOracleV2 still accepts disputes).
     openProposals(atTime = now()): StoredProposal[] {
-        return (this.db.prepare("SELECT * FROM proposals WHERE status = 'open' AND expiration > ? ORDER BY expiration").all(atTime) as Record<string, unknown>[]).map((r) => this.toStored(r));
+        return (
+            this.db
+                .prepare("SELECT * FROM proposals WHERE status = 'open' AND (expiration > ? OR json_extract(data, '$.oracleKind') = 'managed') ORDER BY expiration")
+                .all(atTime) as Record<string, unknown>[]
+        ).map((r) => this.toStored(r));
     }
 
     groupProposals(groupKey: string): StoredProposal[] {

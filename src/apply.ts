@@ -57,6 +57,12 @@ async function runApply(options: ApplyOptions, ask: (question: string) => Promis
     const scope = options.scope && existsSync(options.scope) ? (await queue.defineScope(JSON.parse(readFileSync(options.scope, "utf8")))).name : options.scope;
     if (scope) queue.scopeMatch(scope); // fail fast on an unknown scope
 
+    // We hold the apply lock, so any "sending" row is left over from a run that died mid-send. Clear it: the proposal
+    // becomes a candidate again and is re-checked on chain before anything is sent (a dispute that did land shows up as
+    // already disputed).
+    const stale = Number(store.db.prepare("DELETE FROM disputes WHERE status = 'sending'").run().changes);
+    if (stale) console.warn(`⚠️  Cleared ${stale} dispute(s) left "sending" by an earlier run; they will be re-checked on chain.`);
+
     const engine = new DisputeEngine(config, async (question) => isYesAnswer(await ask(question)));
     await engine.init();
 
@@ -67,12 +73,20 @@ async function runApply(options: ApplyOptions, ask: (question: string) => Promis
     let sentCount = 0;
     let sentBond = 0;
     const declined = new Set<string>();
+    const reportedConflicts = new Set<string>();
 
     console.log(`${config.dryRun ? "🧪 DRY RUN. " : ""}👛 ${config.wallet.address}; policy ${JSON.stringify(policy)}; ${scope ? `scope ${scope}; ` : ""}${options.watch ? `watching every ${options.interval}s, press Ctrl+C to stop` : "single pass"}.`);
 
     for (;;) {
         store.tryLock("apply", owner, Math.max(120, (intervalMs / 1000) * 3));
         await queue.refresh();
+        for (const { stored, evaluation } of queue.conflicts(scope)) {
+            if (reportedConflicts.has(stored.id)) continue;
+            reportedConflicts.add(stored.id);
+            console.warn(
+                `\n⚠️  Reviewers disagree on "${stored.context.parsed.title ?? stored.id}" (${stored.id}): ${evaluation.confirmingAgents.join(", ")} say ${evaluation.verdict}, ${(evaluation.dissentingAgents ?? []).join(", ")} disagree. Not sent automatically: decide by hand (yarn dispute) or ask a reviewer to re-check.`
+            );
+        }
         const candidates = queue.candidates(scope).filter((c) => !declined.has(c.stored.id));
 
         if (candidates.length > 0) {
@@ -108,18 +122,23 @@ async function runApply(options: ApplyOptions, ask: (question: string) => Promis
             if (approved && selected.length > 0) {
                 if (options.watch) console.log("");
                 if (!config.dryRun) selected.forEach((c) => store.setDispute(c.stored.id, "sending"));
-                const outcomes = await engine.dispute(selected.map((c) => c.stored.proposal));
-                const byProposal = new Map(selected.map((c) => [c.stored.proposal, c.stored.id]));
-                for (const outcome of outcomes) {
-                    const id = byProposal.get(outcome.proposal)!;
-                    const status = STORED_STATUS[outcome.status];
-                    if (!status) {
-                        store.db.prepare("DELETE FROM disputes WHERE proposal_id = ? AND status = 'sending'").run(id);
-                        continue;
+                try {
+                    const outcomes = await engine.dispute(selected.map((c) => c.stored.proposal));
+                    const byProposal = new Map(selected.map((c) => [c.stored.proposal, c.stored.id]));
+                    for (const outcome of outcomes) {
+                        const id = byProposal.get(outcome.proposal)!;
+                        const status = STORED_STATUS[outcome.status];
+                        if (!status) continue;
+                        store.setDispute(id, status, outcome.txHash, outcome.detail);
+                        if (status === "disputed" || status === "already-disputed") store.markDisputed([id]);
+                        if (status === "disputed") sentCount++;
                     }
-                    store.setDispute(id, status, outcome.txHash, outcome.detail);
-                    if (status === "disputed" || status === "already-disputed") store.markDisputed([id]);
-                    if (status === "disputed") sentCount++;
+                } catch (error) {
+                    console.error(`🚨 Sending failed: ${error}`);
+                } finally {
+                    // Anything still "sending" got no outcome: make it a candidate again (it is re-checked on chain first).
+                    const clear = store.db.prepare("DELETE FROM disputes WHERE proposal_id = ? AND status = 'sending'");
+                    selected.forEach((c) => clear.run(c.stored.id));
                 }
             }
         }

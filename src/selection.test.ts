@@ -219,3 +219,42 @@ test("without any market data, proposals of one race are grouped and marked excl
     const yes = (p: Proposal) => ({ proposal_id: proposalId(p), verdict: "p2" as const, confidence: 0.95, seen_proposed_price: ethers.constants.WeiPerEther.toString(), reasoning: "x" });
     assert.throws(() => queue.submitReview("r1", batch.groups[0].group_key, "s", [], [yes(a), yes(b)]), /mutually exclusive/);
 });
+
+test("Managed OOv2 proposals stay open past liveness until settled; OOv2 ones close at expiry", async () => {
+    const { disputable } = await import("./dispute");
+    const { filterOpenProposals } = await import("./proposals");
+    const { RequestState } = await import("./constants");
+    const t = 1000;
+    const key = (requester: string) => ({ requester, identifier: ethers.utils.formatBytes32String("YES_OR_NO_QUERY"), timestamp: BigNumber.from(1), ancillaryData: "0x01" });
+    const expired = [V1_ADAPTER, OTHER].map((r) => ({ args: { ...key(r), expirationTimestamp: BigNumber.from(t - 10) } }));
+    assert.equal(filterOpenProposals(expired, [], t, false).length, 0, "OOv2: expired is closed");
+    assert.equal(filterOpenProposals(expired, [], t, false, { keepExpired: true }).length, 2, "Managed: expired stays open");
+    assert.equal(filterOpenProposals(expired, [], t, false, { keepExpired: true, settleEvents: [{ args: key(V1_ADAPTER) }] }).length, 1, "a Settle event closes it");
+
+    assert.equal(disputable("managed", RequestState.Expired, false, t - 10, t), true);
+    assert.equal(disputable("managed", RequestState.Expired, true, t - 10, t), false, "settled");
+    assert.equal(disputable("oov2", RequestState.Expired, false, t - 10, t), false);
+    assert.equal(disputable("oov2", RequestState.Proposed, false, t + 5, t), false, "inside the safety margin");
+    assert.equal(disputable("oov2", RequestState.Proposed, false, t + 3600, t), true);
+});
+
+test("the queue keeps handing out an expired, unsettled Managed OOv2 proposal and accepts its verdict", async () => {
+    const { queue, store, add } = setupQueue();
+    const managed = makeProposal("Will Democrats win the Senate in 2026?", "601", { oracle: "managed" });
+    const oov2 = makeProposal("Will Republicans win the House in 2026?", "602", { oracle: "oov2" });
+    for (const p of [managed, oov2]) p.proposalExpirationTimestamp = BigNumber.from(now() - 60);
+    add(managed);
+    add(oov2);
+
+    const batch = await queue.nextBatch("r1", 10, 5);
+    assert.deepEqual(batch.groups.map((g) => g.label), ["Will Democrats win the Senate in 2026?"], "only the managed one is still disputable");
+    const view = batch.groups[0].proposals[0];
+    assert.ok(view.flags.includes("liveness_ended_disputable_until_settled"));
+    const result = queue.submitReview("r1", batch.groups[0].group_key, "wrong", [], [{ proposal_id: proposalId(managed), verdict: "p1", confidence: 0.95, seen_proposed_price: view.proposed.price, reasoning: "x" }]);
+    assert.equal(result.results[0].status, "dispute");
+    assert.equal(queue.candidates().length, 1);
+
+    store.markSettled([proposalId(managed)]);
+    assert.equal(queue.candidates().length, 0, "settled: no longer disputable");
+    assert.equal(queue.progress().open_proposals, 0);
+});

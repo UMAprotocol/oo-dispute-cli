@@ -1,6 +1,6 @@
 import { ethers } from "ethers";
 import { getERC20ContractInstance, tryHexToUtf8String } from "./contracts";
-import { Proposal } from "./proposals";
+import { disputableAfterLiveness, Proposal } from "./proposals";
 
 import { Config } from "./config";
 
@@ -35,7 +35,8 @@ export async function displayProposalInfo(proposal: Proposal, config: Config, cu
   const ancillaryData = decodeProposalData(proposal.ancillaryData);
   const answer = ethers.utils.formatEther(proposal.proposedPrice);
   const bondValue = ethers.utils.formatUnits(proposal.bond, proposal.bondCurrencyDecimals);
-  const expiryTime = formatExpiryTime(proposal.proposalExpirationTimestamp.sub(currentTimestamp).toNumber());
+  const secondsLeft = proposal.proposalExpirationTimestamp.sub(currentTimestamp).toNumber();
+  const expiryTime = secondsLeft <= 0 && disputableAfterLiveness(proposal.oracleKind) ? "liveness ended, still disputable until the resolver settles" : formatExpiryTime(secondsLeft);
 
   const balance = await getERC20ContractInstance(config.provider, proposal.bondCurrency).balanceOf(config.wallet.address);
   const walletBalanceFormatted = ethers.utils.formatUnits(balance, proposal.bondCurrencyDecimals);
