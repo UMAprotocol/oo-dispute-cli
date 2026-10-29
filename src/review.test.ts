@@ -152,6 +152,23 @@ test("two sessions using the same agent name get separate claims", async () => {
     assert.equal((await queue.nextBatch(qualifyAgent("reviewer-2", "cccccc"), 20, 3)).groups.length, 1, "...leaves the other's in place");
 });
 
+test("dispute candidates carry the ids and links needed to check them", () => {
+    const store = new ReviewStore(":memory:");
+    const queue = new ReviewQueue({ chainId: 137, rpcConcurrency: 4, oracles: [] } as unknown as Config, store, { policy: { minConfidence: 0.8, minConfirmations: 1 }, leaseSeconds: 600, scanIntervalSeconds: 1e6, fetchMarketData: false });
+    const proposal = { ...makeProposal("Did Spain win Euro 2024?", "Resolves Yes if Spain won the UEFA Euro 2024 final.", BigNumber.from(0), 3), proposalTx: "0xabc" };
+    const id = proposalId(proposal);
+    const parsed = parseAncillary(proposal.ancillaryData);
+    const market = { status: "unavailable" as const, fetchedAt: now(), eventSlug: "uefa-euro-2024" };
+    store.insertProposal(id, proposal, { parsed, market, updates: { status: "not_applicable", updates: [] } }, { ...groupFor(id, parsed, market), exclusive: false });
+
+    const ids = queue.identifiers(store.getProposal(id)!);
+    assert.equal(ids.question_id, ethers.utils.keccak256(proposal.ancillaryData));
+    assert.equal(ids.identifier, "YES_OR_NO_QUERY");
+    assert.equal(ids.bond, "750.0 USDC");
+    assert.equal(ids.proposal_tx_url, "https://polygonscan.com/tx/0xabc");
+    assert.equal(ids.polymarket_url, "https://polymarket.com/event/uefa-euro-2024");
+});
+
 test("submit_review validates the seen price and mutual exclusivity, then marks disputes", async () => {
     const { queue, add } = setupQueue();
     const trump = add(makeProposal("Will Trump win?", RACE, ONE, 1), true);

@@ -134,7 +134,7 @@ them.
 | `release_claim` | Give a group back, or all of an agent's groups when called without `group_key` |
 | `get_proposal` | Full detail for one proposal, including previous reviews |
 | `list_queue` / `at_risk` | Open proposals by expiry / unresolved ones close to expiry |
-| `dispute_candidates` | Proposals whose reviews call for a dispute, not yet sent |
+| `dispute_candidates` | Proposals whose reviews call for a dispute, not yet sent, with the ids to check them: Polymarket market id and event page, UMA question id, CTF condition id, request fields, proposer, bond and a Polygonscan link to the proposal |
 | `define_scope` / `list_scopes` | Create or list scopes |
 | `regroup` | Put proposals about one event in one group |
 
