@@ -8,11 +8,12 @@
 // - Claude Code: a local-scope server for this repo (`claude mcp add --scope local`), which takes precedence over
 //   .mcp.json and stays out of git.
 // - Codex: writes or replaces [mcp_servers.oo-dispute] in ~/.codex/config.toml ($CODEX_HOME), after a backup, and
-//   installs the /prompts:review-disputes prompt (Claude Code reads it from .claude/commands as /review-disputes).
+//   installs the review-disputes skill ($review-disputes). Claude Code reads its version from .claude/commands as
+//   /review-disputes.
 // - Creates .oo-dispute/mcp.env (chain and RPC for the server) if it doesn't exist. It never holds PRIVATE_KEY.
 // Without --claude / --codex, it sets up whichever is installed.
 const { spawnSync } = require("child_process");
-const { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } = require("fs");
+const { copyFileSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } = require("fs");
 const { homedir } = require("os");
 const { join, resolve } = require("path");
 const readline = require("readline");
@@ -21,7 +22,7 @@ const REPO = resolve(__dirname, "..");
 const ENTRY = join(REPO, "dist", "mcp-entry.js");
 const MCP_ENV = join(REPO, ".oo-dispute", "mcp.env");
 const NAME = "oo-dispute";
-const REVIEW_PROMPT = join(REPO, ".claude", "commands", "review-disputes.md");
+const CODEX_SKILL = join(REPO, "codex", "skills", "review-disputes");
 const SERVER_ARGS = [ENTRY, "--only-polymarket"];
 
 function parseArgs(argv) {
@@ -142,13 +143,19 @@ function setupCodex() {
         // The first call scans the chain and can take minutes.
         "startup_timeout_sec = 30",
         "tool_timeout_sec = 600",
+        // The server never signs: its write tools only touch the local review queue (claims, verdicts, scopes). Without
+        // this, Codex asks before every next_batch / submit_review, and its subagents can't ask at all.
+        'default_tools_approval_mode = "approve"',
     ].join("\n");
     const rest = withoutServer(current);
     writeFileSync(file, (rest ? `${rest}\n\n` : "") + block + "\n");
     console.log(`✓ Codex: wrote [mcp_servers.${NAME}] to ${file}${current ? ` (backup: ${file}.bak)` : ""}`);
-    mkdirSync(join(dir, "prompts"), { recursive: true });
-    copyFileSync(REVIEW_PROMPT, join(dir, "prompts", "review-disputes.md"));
-    console.log("✓ Codex: installed the /prompts:review-disputes prompt");
+    const skill = join(dir, "skills", "review-disputes");
+    rmSync(skill, { recursive: true, force: true });
+    cpSync(CODEX_SKILL, skill, { recursive: true });
+    // Earlier versions installed it as a custom prompt, which Codex Desktop doesn't expand.
+    rmSync(join(dir, "prompts", "review-disputes.md"), { force: true });
+    console.log("✓ Codex: installed the review-disputes skill ($review-disputes)");
     return true;
 }
 
@@ -167,9 +174,11 @@ async function main() {
 
     const done = [claude && setupClaude(claudeCli) && "Claude Code", codex && setupCodex() && "Codex"].filter(Boolean);
     if (!done.length) process.exit(1);
-    console.log(`\nNext: open a new ${done.join(" / ")} session in ${REPO} and run /review-disputes (Codex: /prompts:review-disputes),`);
-    console.log("optionally with a scope and a limit, e.g. '/review-disputes permissionless 10'. The first call scans the chain and can");
-    console.log("take a few minutes. Send disputes yourself with 'yarn apply --watch --scope <scope>'.");
+    console.log(`\nNext: open a new ${done.join(" / ")} session in ${REPO} and start a review:`);
+    if (done.includes("Claude Code")) console.log("  Claude Code: /review-disputes permissionless, 3 reviewers");
+    if (done.includes("Codex")) console.log("  Codex:       Use $review-disputes on scope permissionless with 3 reviewers");
+    console.log("The first call scans the chain and can take a few minutes. Send disputes yourself with");
+    console.log("'yarn apply --watch --scope <scope>'.");
 }
 
 if (require.main === module) main().catch((error) => fail(error.message));
