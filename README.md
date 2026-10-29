@@ -180,6 +180,12 @@ Market slugs, event slugs and Gamma tags are converted to ids through Gamma:
     `scope`; `"all"` means every proposal.
 - **When sending**, run `yarn apply --watch --scope midterms` (a scope name or a selection file).
 
+Resolving also records **which Polymarket event each market belongs to** (`market_events` / `events` in the
+resolved file), keyed exactly like the live grouping. When a proposal arrives and Polymarket's APIs don't answer, the
+queue still groups a race's markets together from that map and marks neg-risk events as mutually exclusive, so one
+review covers the whole race and the "more than one Yes" check still applies. With `midterms-2026` that is 4,552
+markets in 512 events.
+
 Scopes filter only what is handed out and listed. The queue still records every proposal, so switching scopes
 doesn't need a new chain scan. Polymarket V2 proposals (JSON ancillary data) are not parsed yet, so `title_regex`
 and `market_ids` don't match them; `protocol: ["polymarket_v2"]` does. V2 is also excluded by `--only-polymarket`.

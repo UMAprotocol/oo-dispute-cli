@@ -12,6 +12,8 @@ export const POLYMARKET_REQUESTER_ADDRESSES = [
     "0xb21182d0494521Cf45DbbeEbb5A3ACAAb6d22093",
     "0x157Ce2d672854c848c9b79C49a8Cc6cc89176a49",
     "0x65070BE91477460D8A7AeEb94ef92fe056C2f2A7",
+    "0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296", // neg-risk adapter
+    "0x69c47De9D4D3Dad79590d61b9e05918E03775f24", // 3PO
 ];
 
 // Requester of Polymarket V2 markets (OOReporter). Only used to label a proposal's protocol for selections: V2

@@ -25,7 +25,16 @@ const MAX_PROPOSALS = Number(process.env.MAX_PROPOSALS || 10);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const now = () => Math.floor(Date.now() / 1000);
 const answersFile = path.join(dir, "answers.json");
-const readAnswers = () => (fs.existsSync(answersFile) ? JSON.parse(fs.readFileSync(answersFile, "utf8")) : { done: false, items: [] });
+// The generator rewrites the answer key while reviewers read it; keep the last complete copy on a partial read.
+let lastAnswers = { done: false, items: [] };
+const readAnswers = () => {
+    try {
+        if (fs.existsSync(answersFile)) lastAnswers = JSON.parse(fs.readFileSync(answersFile, "utf8"));
+    } catch {
+        // Mid-write: use the previous copy.
+    }
+    return lastAnswers;
+};
 
 async function connect(name) {
     const client = new Client({ name, version: "1" });

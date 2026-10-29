@@ -32,6 +32,10 @@ export const SelectionSchema = z
         exclude: Criteria.optional(),
         protocol: z.array(z.enum(PROTOCOLS)).optional(),
         oracle: z.array(z.enum(["oov2", "managed"])).optional(),
+        // Filled by resolution: which Polymarket event each market belongs to, so the queue can group a race's markets
+        // together (and know they are mutually exclusive) without Gamma. Keys match the live grouping keys.
+        market_events: z.record(z.string()).optional(),
+        events: z.record(z.object({ title: z.string().optional(), exclusive: z.boolean() })).optional(),
         resolved: z
             .object({
                 at: z.string(),
@@ -106,10 +110,31 @@ export function compileSelection(selection: Selection): (sp: StoredProposal) => 
 // ---- Gamma resolution: slugs / event slugs / tags -> ids ----
 
 type Fetch = (url: string) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
-interface GammaMarket {
+interface GammaEvent {
     id?: string | number;
+    title?: string;
+    negRisk?: boolean;
+    negRiskMarketID?: string;
+}
+interface GammaMarket extends Omit<GammaEvent, "title"> {
     questionID?: string;
     conditionId?: string;
+    events?: GammaEvent[];
+    _event?: GammaEvent;
+}
+
+export interface EventGroup {
+    key: string;
+    title?: string;
+    exclusive: boolean;
+}
+
+// Same keys as live grouping (queue.groupFor): a neg-risk event is keyed by its neg-risk market id, anything else by
+// its Gamma event id.
+export function eventGroupOf(event: GammaEvent): EventGroup | undefined {
+    if (event.negRisk && event.negRiskMarketID) return { key: `negrisk:${event.negRiskMarketID.toLowerCase()}`, title: event.title, exclusive: true };
+    if (event.id !== undefined) return { key: `event:${event.id}`, title: event.title, exclusive: false };
+    return undefined;
 }
 
 const GAMMA_BASE_URL = process.env.POLYMARKET_GAMMA_URL || "https://gamma-api.polymarket.com";
@@ -124,12 +149,12 @@ async function getJson(fetchFn: Fetch, url: string): Promise<unknown> {
 async function marketsBySlug(fetchFn: Fetch, slug: string): Promise<GammaMarket[]> {
     // Gamma hides closed markets unless asked, and markets close for trading before they are proposed.
     const [open, closed] = await Promise.all(["false", "true"].map((c) => getJson(fetchFn, `${GAMMA_BASE_URL}/markets?slug=${encodeURIComponent(slug)}&closed=${c}`)));
-    return [...(open as GammaMarket[]), ...(closed as GammaMarket[])];
+    return [...(open as GammaMarket[]), ...(closed as GammaMarket[])].map((m) => ({ ...m, _event: m.events?.[0] && { ...m.events[0], negRisk: m.negRisk ?? m.events[0].negRisk, negRiskMarketID: m.negRiskMarketID ?? m.events[0].negRiskMarketID } }));
 }
 
 async function marketsByEventSlug(fetchFn: Fetch, slug: string): Promise<GammaMarket[]> {
-    const events = (await getJson(fetchFn, `${GAMMA_BASE_URL}/events?slug=${encodeURIComponent(slug)}`)) as { markets?: GammaMarket[] }[];
-    return events.flatMap((e) => e.markets ?? []);
+    const events = (await getJson(fetchFn, `${GAMMA_BASE_URL}/events?slug=${encodeURIComponent(slug)}`)) as (GammaEvent & { markets?: GammaMarket[] })[];
+    return events.flatMap((e) => (e.markets ?? []).map((m) => ({ ...m, _event: e })));
 }
 
 async function marketsByTag(fetchFn: Fetch, tag: string, warnings: string[]): Promise<GammaMarket[]> {
@@ -139,22 +164,27 @@ async function marketsByTag(fetchFn: Fetch, tag: string, warnings: string[]): Pr
             warnings.push(`tag:${tag} (truncated at ${MAX_TAG_EVENTS} events; use a narrower tag or event slugs)`);
             break;
         }
-        let page: { markets?: GammaMarket[] }[];
+        let page: (GammaEvent & { markets?: GammaMarket[] })[];
         try {
-            page = (await getJson(fetchFn, `${GAMMA_BASE_URL}/events?tag_slug=${encodeURIComponent(tag)}&closed=false&limit=100&offset=${offset}`)) as { markets?: GammaMarket[] }[];
+            page = (await getJson(fetchFn, `${GAMMA_BASE_URL}/events?tag_slug=${encodeURIComponent(tag)}&closed=false&limit=100&offset=${offset}`)) as (GammaEvent & { markets?: GammaMarket[] })[];
         } catch (error) {
             if (offset === 0) throw error;
             // Gamma refuses deep offsets (HTTP 422 past ~2000): keep what was fetched and say the tag is incomplete.
             warnings.push(`tag:${tag} (truncated after ${offset} events: ${(error as Error).message}; use a narrower tag or event slugs)`);
             break;
         }
-        markets.push(...page.flatMap((e) => e.markets ?? []));
+        markets.push(...page.flatMap((e) => (e.markets ?? []).map((m) => ({ ...m, _event: e }))));
         if (page.length < 100) break;
     }
     return markets;
 }
 
-async function resolveCriteria(c: CriteriaT | undefined, fetchFn: Fetch, unresolved: string[]): Promise<CriteriaT | undefined> {
+interface EventIndex {
+    market_events: Record<string, string>;
+    events: Record<string, { title?: string; exclusive: boolean }>;
+}
+
+async function resolveCriteria(c: CriteriaT | undefined, fetchFn: Fetch, unresolved: string[], index: EventIndex): Promise<CriteriaT | undefined> {
     if (!c) return c;
     const marketIds = new Set(c.market_ids ?? []);
     const questionIds = new Set(c.question_ids ?? []);
@@ -169,6 +199,11 @@ async function resolveCriteria(c: CriteriaT | undefined, fetchFn: Fetch, unresol
             const markets = await lookup();
             if (markets.length === 0) unresolved.push(`${label} (no markets found)`);
             for (const m of markets) {
+                const group = m._event && eventGroupOf(m._event);
+                if (group && m.id !== undefined) {
+                    index.market_events[String(m.id)] = group.key;
+                    index.events[group.key] = { title: group.title, exclusive: group.exclusive };
+                }
                 if (m.id !== undefined) marketIds.add(String(m.id));
                 if (m.questionID) questionIds.add(m.questionID.toLowerCase());
                 if (m.conditionId) conditionIds.add(m.conditionId.toLowerCase());
@@ -196,13 +231,15 @@ export async function resolveSelection(selection: Selection, fetchFn: Fetch = (u
     const pick = (c?: CriteriaT) => ({ slugs: c?.slugs ?? [], event_slugs: c?.event_slugs ?? [], tags: c?.tags ?? [] });
     const from = { slugs: [...pick(selection.include).slugs, ...pick(selection.exclude).slugs], event_slugs: [...pick(selection.include).event_slugs, ...pick(selection.exclude).event_slugs], tags: [...pick(selection.include).tags, ...pick(selection.exclude).tags] };
     const includeHadSelectors = hasSelectors(selection.include);
-    const include = await resolveCriteria(selection.include, fetchFn, unresolved);
-    const exclude = await resolveCriteria(selection.exclude, fetchFn, unresolved);
+    const index: EventIndex = { market_events: { ...(selection.market_events ?? {}) }, events: { ...(selection.events ?? {}) } };
+    const include = await resolveCriteria(selection.include, fetchFn, unresolved, index);
+    const exclude = await resolveCriteria(selection.exclude, fetchFn, unresolved, index);
     if (includeHadSelectors && !hasSelectors(include)) unresolved.push("include: nothing could be resolved, so this selection matches no proposals");
     return {
         ...selection,
         include,
         exclude,
+        ...(Object.keys(index.market_events).length ? index : {}),
         resolved: { at: new Date().toISOString(), from, unresolved: [...(selection.resolved?.unresolved ?? []), ...unresolved], include_had_selectors: includeHadSelectors },
     };
 }
@@ -222,6 +259,7 @@ export function describeSelection(s: Selection) {
         exclude: count(s.exclude),
         protocol: s.protocol ?? "any",
         oracle: s.oracle ?? "any",
+        events_known: Object.keys(s.events ?? {}).length,
         resolved_at: s.resolved?.at,
         unresolved: s.resolved?.unresolved ?? [],
     };

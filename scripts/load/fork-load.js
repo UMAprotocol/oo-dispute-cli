@@ -34,7 +34,11 @@ const account = (i) => ethers.Wallet.fromMnemonic(MNEMONIC, `m/44'/60'/0'/0/${i}
 const [deployer, proposer, disputer] = [0, 3, 5].map(account);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const readJson = (file) => JSON.parse(fs.readFileSync(file, "utf8"));
-const writeJson = (file, value) => fs.writeFileSync(file, JSON.stringify(value, null, 1));
+// Atomic: reviewers read the answer key while it is being rewritten.
+const writeJson = (file, value) => {
+    fs.writeFileSync(`${file}.tmp`, JSON.stringify(value, null, 1));
+    fs.renameSync(`${file}.tmp`, file);
+};
 
 async function assertFork() {
     for (const address of [REAL_OOV2, USDCE]) {
@@ -173,25 +177,44 @@ async function generate(dir) {
     const requester = oo.connect(await impersonate(POLYMARKET_ADAPTER));
     const asProposer = oo.connect(proposer);
 
-    const pool = shuffle(await loadMarkets(path.resolve(REPO, process.env.SELECTION || "selections/midterms-2026.json")));
-    if (pool.length < count) throw new Error(`Only ${pool.length} midterm markets available, asked for ${count}`);
-    console.log(`Loaded ${pool.length} midterm markets from Gamma; proposing ${count} in ${waves} waves over ${minutes} min, liveness ${liveness}s, ${wrongRate * 100}% wrong.`);
+    // Whole events go out together, like a race being called: all its markets are proposed at once. Each event (a
+    // neg-risk set) has exactly one true Yes; a wrong proposal flips that (an extra Yes, or the winner proposed No).
+    const markets = await loadMarkets(path.resolve(REPO, process.env.SELECTION || "selections/midterms-2026.json"));
+    const byEvent = new Map();
+    for (const m of markets) byEvent.set(m.event, [...(byEvent.get(m.event) ?? []), m]);
+    const pool = [];
+    for (const group of shuffle([...byEvent.values()])) {
+        if (pool.length >= count) break;
+        const winner = Math.floor(Math.random() * group.length);
+        group.slice(0, count - pool.length).forEach((m, i) => pool.push({ ...m, truth: i === winner ? "p2" : "p1" }));
+    }
+    if (pool.length < count) throw new Error(`Only ${markets.length} midterm markets available, asked for ${count}`);
+    console.log(`Loaded ${markets.length} midterm markets (${byEvent.size} events) from Gamma; proposing ${count} in ${waves} waves over ${minutes} min, liveness ${liveness}s, ${wrongRate * 100}% wrong.`);
 
     const answersFile = path.join(dir, "answers.json");
     const answers = { liveness, wrongRate, count, done: false, items: [] };
-    const perWave = Math.ceil(count / waves);
+    // Waves of whole events, about count / waves proposals each.
+    const waveBatches = [];
+    let current = [];
+    for (let i = 0; i < pool.length; i++) {
+        current.push(pool[i]);
+        const eventEnds = i + 1 === pool.length || pool[i + 1].event !== pool[i].event;
+        if (eventEnds && current.length >= count / waves) {
+            waveBatches.push(current);
+            current = [];
+        }
+    }
+    if (current.length) waveBatches.push(current);
     const started = Date.now();
-    for (let wave = 0; wave < waves; wave++) {
-        const due = started + (wave * minutes * 60_000) / waves;
+    for (const [wave, batch] of waveBatches.entries()) {
+        const due = started + (wave * minutes * 60_000) / waveBatches.length;
         if (Date.now() < due) await sleep(due - Date.now());
-        const batch = pool.slice(wave * perWave, Math.min(count, (wave + 1) * perWave));
-        if (!batch.length) break;
         const waveStart = Date.now();
         const timestamp = (await provider.getBlock("latest")).timestamp - 60;
         const items = batch.map((market) => {
-            const proposed = Math.random() < 0.5 ? "p2" : "p1";
             const wrong = Math.random() < wrongRate;
-            return { market_id: market.id, title: market.question, event: market.event, ancillaryData: ancillaryFor(market), timestamp, proposed, truth: wrong ? (proposed === "p2" ? "p1" : "p2") : proposed, wrong };
+            const proposed = wrong ? (market.truth === "p2" ? "p1" : "p2") : market.truth;
+            return { market_id: market.id, title: market.question, event: market.event, ancillaryData: ancillaryFor(market), timestamp, proposed, truth: market.truth, wrong };
         });
 
         // The answer key goes out before the proposals, so a fast reviewer never sees a proposal without its answer.
@@ -216,7 +239,7 @@ async function generate(dir) {
             answers.items.push({ ...pending[i], proposal_tx: receipts[i].transactionHash, proposed_at: block.timestamp, expires_at: block.timestamp + liveness });
         }
         writeJson(answersFile, answers);
-        console.log(`wave ${wave + 1}/${waves}: ${items.length} proposals (${items.filter((i) => i.wrong).length} wrong) in ${((Date.now() - waveStart) / 1000).toFixed(1)}s; total ${answers.items.length}`);
+        console.log(`wave ${wave + 1}/${waveBatches.length}: ${items.length} proposals (${items.filter((i) => i.wrong).length} wrong) in ${((Date.now() - waveStart) / 1000).toFixed(1)}s; total ${answers.items.length}`);
     }
     answers.done = true;
     writeJson(answersFile, answers);

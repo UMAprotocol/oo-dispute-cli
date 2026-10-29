@@ -173,3 +173,49 @@ test("a tag cut off by Gamma's offset limit keeps the pages already fetched and 
     assert.equal(resolved.include?.market_ids?.length, 100);
     assert.match(resolved.resolved!.unresolved.join(" "), /tag:sports \(truncated after 100 events: HTTP 422/);
 });
+
+test("resolution records each market's event, keyed like the live grouping", async () => {
+    const json = (body: unknown) => ({ ok: true, status: 200, json: async () => body });
+    const fakeFetch = async (url: string) => {
+        if (url.includes("/events?slug=az-01")) return json([{ id: 106050, title: "AZ-01", negRisk: true, negRiskMarketID: "0xABC", markets: [{ id: "11" }, { id: "12" }] }]);
+        if (url.includes("tag_slug=midterms") && url.includes("offset=0")) return json([{ id: 7, title: "Senate control", negRisk: false, markets: [{ id: "21" }] }]);
+        if (url.includes("/markets?slug=single&closed=false")) return json([{ id: "31", negRisk: true, negRiskMarketID: "0xDEF", events: [{ id: 9, title: "Event 9" }] }]);
+        return json([]);
+    };
+    const resolved = await resolveSelection(parseSelection({ name: "m", include: { event_slugs: ["az-01"], tags: ["midterms"], slugs: ["single"] } }), fakeFetch);
+    assert.deepEqual(resolved.market_events, { "11": "negrisk:0xabc", "12": "negrisk:0xabc", "21": "event:7", "31": "negrisk:0xdef" });
+    assert.deepEqual(resolved.events?.["negrisk:0xabc"], { title: "AZ-01", exclusive: true });
+    assert.equal(resolved.events?.["event:7"]?.exclusive, false);
+    assert.equal(parseSelection(JSON.parse(JSON.stringify(resolved))).market_events?.["31"], "negrisk:0xdef", "the map survives a save/load");
+});
+
+test("groupFor: live neg-risk id first, then the selection's event map, then the live Gamma event", () => {
+    const parsed = parseAncillary(makeProposal("Will A win the AZ-01 House seat?", "11").ancillaryData);
+    const known = { key: "negrisk:0xabc", title: "AZ-01", exclusive: true };
+    const none = { status: "unavailable" as const, fetchedAt: 0 };
+    assert.deepEqual(groupFor("p", parsed, none, known), { groupKey: "negrisk:0xabc", label: "AZ-01", exclusive: true, source: "negrisk" });
+    assert.equal(groupFor("p", parsed, { ...none, negRiskMarketId: "0xABC" }, known).groupKey, "negrisk:0xabc", "live and offline keys agree");
+    assert.equal(groupFor("p", parsed, { ...none, eventId: "106050" }, known).groupKey, "negrisk:0xabc", "map wins over the live Gamma event id");
+    assert.equal(groupFor("p", parsed, { ...none, eventId: "106050" }).groupKey, "event:106050");
+});
+
+test("without any market data, proposals of one race are grouped and marked exclusive through the selection map", async () => {
+    const { queue } = setupQueue();
+    await queue.defineScope({
+        name: "az01",
+        include: { market_ids: ["11", "12"] },
+        market_events: { "11": "negrisk:0xabc", "12": "negrisk:0xabc" },
+        events: { "negrisk:0xabc": { title: "AZ-01 House", exclusive: true } },
+    });
+    const a = makeProposal("Will A win the AZ-01 House seat?", "11", { description: "Rules for A." });
+    const b = makeProposal("Will B win the AZ-01 House seat?", "12", { description: "Rules for B." });
+    await (queue as unknown as { ingest(p: Proposal[]): Promise<number> }).ingest([a, b]);
+    const batch = await queue.nextBatch("r1", 10, 1, "az01");
+    assert.equal(batch.groups.length, 1);
+    assert.equal(batch.groups[0].label, "AZ-01 House");
+    assert.equal(batch.groups[0].mutually_exclusive, true);
+    assert.equal(batch.groups[0].proposals.length, 2);
+    assert.ok(batch.groups[0].proposals.every((p) => p.flags.includes("multiple_yes_in_exclusive_group")), "both were proposed Yes");
+    const yes = (p: Proposal) => ({ proposal_id: proposalId(p), verdict: "p2" as const, confidence: 0.95, seen_proposed_price: ethers.constants.WeiPerEther.toString(), reasoning: "x" });
+    assert.throws(() => queue.submitReview("r1", batch.groups[0].group_key, "s", [], [yes(a), yes(b)]), /mutually exclusive/);
+});

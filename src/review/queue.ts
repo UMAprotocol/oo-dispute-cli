@@ -18,7 +18,7 @@ import {
 } from "../polymarket";
 import { Proposal, RequestKey, requestKeyId, scanOracleRange } from "../proposals";
 import { evaluate, Evaluation, needsReview, recheckTime, ReviewPolicy } from "./policy";
-import { compileSelection, describeSelection, needsResolution, parseSelection, resolveSelection, Selection } from "./selection";
+import { compileSelection, describeSelection, EventGroup, needsResolution, parseSelection, resolveSelection, Selection } from "./selection";
 import { GroupRow, now, ProposalContext, ReviewStore, StoredProposal } from "./store";
 
 // Proposals with less time left than this are not handed out: a review would not finish in time.
@@ -56,9 +56,12 @@ export function proposalId(key: RequestKey): string {
 
 // The Polymarket event is the best key: all lines of one match share it, and two matches built from the same market
 // template (identical rules text) never do. Identical rules text is only a fallback when the event is unknown.
-export function groupFor(id: string, parsed: ParsedAncillary, market: MarketData): GroupRow {
+// `known` is the market's event from a resolved selection: same keys as the live data, so grouping is identical whether or
+// not Polymarket's APIs answer at ingest time.
+export function groupFor(id: string, parsed: ParsedAncillary, market: MarketData, known?: EventGroup): GroupRow {
     const label = parsed.title ?? market.question ?? id.slice(0, 20);
-    if (market.negRiskMarketId) return { groupKey: `negrisk:${market.negRiskMarketId}`, label, exclusive: true, source: "negrisk" };
+    if (market.negRiskMarketId) return { groupKey: `negrisk:${market.negRiskMarketId.toLowerCase()}`, label, exclusive: true, source: "negrisk" };
+    if (known) return { groupKey: known.key, label: known.title ?? label, exclusive: known.exclusive, source: known.key.startsWith("negrisk:") ? "negrisk" : "event" };
     if (market.eventId) return { groupKey: `event:${market.eventId}`, label: market.eventTitle ?? label, exclusive: false, source: "event" };
     if (parsed.description) return { groupKey: `desc:${sha(parsed.description)}`, label, exclusive: false, source: "description" };
     return { groupKey: `single:${sha(id)}`, label, exclusive: false, source: "single" };
@@ -124,6 +127,7 @@ export class ReviewQueue {
     private marketFailures = 0;
     // Compiled scopes, reused until their stored definition changes (a resolved selection can hold thousands of ids).
     private scopeCache = new Map<string, { raw: string; match: Match }>();
+    private eventIndex?: { signature: string; byMarket: Map<string, EventGroup> };
 
     constructor(private config: Config, readonly store: ReviewStore, private options: QueueOptions, private owner = `pid-${process.pid}`) {}
 
@@ -172,13 +176,28 @@ export class ReviewQueue {
         return market;
     }
 
+    // Market -> event from every stored scope, rebuilt only when the scopes change.
+    private eventsByMarket(): Map<string, EventGroup> {
+        const raws = this.store.scopeNames().map((name) => this.store.getScopeRaw(name) ?? "");
+        const signature = raws.map((r) => r.length).join(",") + "|" + this.store.scopeNames().join(",");
+        if (this.eventIndex?.signature === signature) return this.eventIndex.byMarket;
+        const byMarket = new Map<string, EventGroup>();
+        for (const raw of raws) {
+            const { market_events = {}, events = {} } = JSON.parse(raw) as Pick<Selection, "market_events" | "events">;
+            for (const [marketId, key] of Object.entries(market_events)) byMarket.set(marketId, { key, title: events[key]?.title, exclusive: events[key]?.exclusive ?? false });
+        }
+        this.eventIndex = { signature, byMarket };
+        return byMarket;
+    }
+
     private async ingest(proposals: Proposal[]): Promise<number> {
+        const events = this.eventsByMarket();
         const results = await mapWithConcurrency(proposals, 5, async (proposal) => {
             const id = proposalId(proposal);
             if (this.store.getProposal(id)) return false;
             const parsed = parseAncillary(proposal.ancillaryData);
             const market = await this.marketData(proposal);
-            return this.store.insertProposal(id, proposal, { parsed, market }, groupFor(id, parsed, market));
+            return this.store.insertProposal(id, proposal, { parsed, market }, groupFor(id, parsed, market, parsed.marketId ? events.get(parsed.marketId) : undefined));
         });
         if (this.marketFailures >= 3) this.marketFailures = 2; // probe again on the next scan
         return results.filter(Boolean).length;
