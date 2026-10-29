@@ -205,6 +205,31 @@ The MCP server reads `.oo-dispute/mcp.env` (or `OO_DISPUTE_ENV_FILE`) at startup
 incident when agents are launched from a desktop app without your shell variables. It never loads `PRIVATE_KEY`.
 `START_BLOCK` sets where a fresh review queue starts scanning.
 
+### Load test (many simultaneous proposals, no LLM)
+
+```bash
+FORK_URL=<polygon archive rpc> yarn fork:load
+```
+
+The load test puts the review queue, the MCP server and `apply` under the kind of burst expected on election
+night, without spending model tokens:
+
+- **Proposals:** it builds Polymarket-format proposals from real midterm markets (`selections/midterms-2026.json`,
+  via Gamma). By default it sends 1000 in waves over 10 minutes, with a 20-minute liveness so expiry pressure is
+  real, and 10% of the answers wrong.
+- **Fork contracts:** it deploys a fresh OptimisticOracleV2 on the fork against UMA's real Finder and registers it,
+  so disputes escalate to the real oracle while the oracle's storage stays local and fast. The CLI is pointed at it
+  with `OOV2_ADDRESS`.
+- **Reviewers:** it runs scripted reviewers in parallel (`REVIEWERS`, default 10). Each runs its own `oo-dispute` MCP
+  server and loops `next_batch` → simulated thinking time → `submit_review`, taking verdicts from the answer key.
+  Some first looks answer `unclear`, to exercise re-checks.
+- **Disputes:** it runs `apply --watch --auto` alongside, and at the end reports on chain how many wrong proposals
+  were disputed in time, missed, or wrongly disputed, plus dispute delay and margin before expiry.
+
+Tune it with `COUNT`, `MINUTES`, `WAVES`, `LIVENESS`, `WRONG_RATE`, `REVIEWERS`, `THINK_MS` (for example `2000-8000`)
+and `UNCLEAR_RATE`. Output goes to `.oo-dispute/load-<timestamp>/`: `report.json`, `reviewers.json`,
+`progress.jsonl` and the logs. It runs its own anvil on port 8556 and never touches `.oo-dispute/mcp.env`.
+
 The building blocks:
 
 `scripts/fork-rehearsal.js` creates test proposals on a local Polygon fork, so you can run the whole flow end to end without touching mainnet. It uses anvil's well-known test accounts and refuses to run unless the RPC it is given has the real Polygon contracts.

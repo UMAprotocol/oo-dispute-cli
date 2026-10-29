@@ -65,6 +65,14 @@ function resolveSort(options: Options): SortOrder {
     return selected[0] ?? "time";
 }
 
+// OOV2_ADDRESS / MANAGED_OOV2_ADDRESS point the CLI at other deployments (testnets, fork load tests).
+function oracleOverride(name: string, fallback: string): string {
+    const value = process.env[name];
+    if (!value) return fallback;
+    if (!ethers.utils.isAddress(value)) throw new Error(`${name} is not a valid address: ${value}`);
+    return value;
+}
+
 async function resolveOracles(chainId: number, options: Options): Promise<OracleConfig[]> {
     const selection = options.managedOo ? "managed" : options.oracle;
     if (!["all", "oov2", "managed"].includes(selection)) {
@@ -73,8 +81,8 @@ async function resolveOracles(chainId: number, options: Options): Promise<Oracle
 
     if (chainId === POLYGON_CHAIN_ID) {
         const oracles: OracleConfig[] = [];
-        if (selection !== "managed") oracles.push({ kind: "oov2", address: POLYGON_OOV2_ADDRESS });
-        if (selection !== "oov2") oracles.push({ kind: "managed", address: POLYGON_MANAGED_OOV2_ADDRESS });
+        if (selection !== "managed") oracles.push({ kind: "oov2", address: oracleOverride("OOV2_ADDRESS", POLYGON_OOV2_ADDRESS) });
+        if (selection !== "oov2") oracles.push({ kind: "managed", address: oracleOverride("MANAGED_OOV2_ADDRESS", POLYGON_MANAGED_OOV2_ADDRESS) });
         return oracles;
     }
 

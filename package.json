@@ -12,7 +12,8 @@
     "fork:up": "scripts/fork-env.sh up",
     "fork:down": "scripts/fork-env.sh down",
     "fork:status": "scripts/fork-env.sh status",
-    "select": "node dist/mass-dispute-cli.js select"
+    "select": "node dist/mass-dispute-cli.js select",
+    "fork:load": "scripts/load/run.sh"
   },
   "keywords": [],
   "author": "",

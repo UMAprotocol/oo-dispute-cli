@@ -361,6 +361,7 @@ export class ReviewQueue {
             needs_review: agent ? needsReview(evaluation, agent, atTime) : undefined,
             status: evaluation.action,
             title: parsed.title,
+            market_id: parsed.marketId,
             proposed: { verdict: proposed ?? null, meaning: describePrice(proposal.proposedPrice, parsed), price: proposal.proposedPrice.toString() },
             options: {
                 p1: parsed.resData.p1.label ?? parsed.resData.p1.price,
