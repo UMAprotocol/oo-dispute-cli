@@ -1,0 +1,17 @@
+{
+  "name": "midterms",
+  "description": "2026 US midterm markets. Resolve before the incident: yarn select resolve selections/midterms.example.json",
+  "include": {
+    "event_slugs": [
+      "which-party-will-win-the-senate-in-2026",
+      "which-party-will-win-the-house-in-2026"
+    ],
+    "tags": [
+      "midterms"
+    ],
+    "title_regex": "\\b(Senate|House|Governor|midterms?)\\b"
+  },
+  "exclude": {
+    "title_regex": "primary"
+  }
+}

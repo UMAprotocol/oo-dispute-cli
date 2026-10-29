@@ -5,17 +5,28 @@
   "main": "index.js",
   "scripts": {
     "build": "tsc",
-    "dispute": "node dist/mass-dispute-cli.js dispute"
+    "dispute": "node dist/mass-dispute-cli.js dispute",
+    "test": "tsc && node --test \"dist/**/*.test.js\"",
+    "apply": "node dist/mass-dispute-cli.js apply",
+    "mcp": "node dist/mcp-entry.js",
+    "fork:up": "scripts/fork-env.sh up",
+    "fork:down": "scripts/fork-env.sh down",
+    "fork:status": "scripts/fork-env.sh status",
+    "select": "node dist/mass-dispute-cli.js select",
+    "fork:load": "scripts/load/run.sh"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.1",
     "@uma/common": "^2.37.1",
     "@uma/contracts-node": "^0.4.23",
     "commander": "^12.1.0",
+    "dotenv": "16.6.1",
     "ethers": "^5",
-    "typescript": "^5.6.2"
+    "typescript": "^5.6.2",
+    "zod": "3.25.76"
   },
   "devDependencies": {
     "@nomiclabs/hardhat-ethers": "^2.2.3",

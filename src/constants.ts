@@ -1,5 +1,9 @@
 export const POLYGON_BLOCKS_PER_HOUR = 1800;
 
+export const POLYGON_CHAIN_ID = 137;
+export const POLYGON_OOV2_ADDRESS = "0xeE3Afe347D5C74317041E2618C49534dAf887c24";
+export const POLYGON_MANAGED_OOV2_ADDRESS = "0x2C0367a9DB231dDeBd88a94b4f6461a6e47C58B1";
+
 export const POLYMARKET_REQUESTER_ADDRESSES = [
     "0xCB1822859cEF82Cd2Eb4E6276C7916e692995130", // binary
     "0x6A9D222616C90FcA5754cd1333cFD9b7fb6a4F74", // ctf
@@ -8,8 +12,29 @@ export const POLYMARKET_REQUESTER_ADDRESSES = [
     "0xb21182d0494521Cf45DbbeEbb5A3ACAAb6d22093",
     "0x157Ce2d672854c848c9b79C49a8Cc6cc89176a49",
     "0x65070BE91477460D8A7AeEb94ef92fe056C2f2A7",
+    "0xd91E80cF2E7be2e162c6513ceD06f1dD0dA35296", // neg-risk adapter
+    "0x69c47De9D4D3Dad79590d61b9e05918E03775f24", // 3PO
 ];
 
+// Requester of Polymarket V2 markets (OOReporter). Only used to label a proposal's protocol for selections: V2
+// ancillary data (JSON) is not parsed yet, and V2 is not in POLYMARKET_REQUESTER_ADDRESSES.
+export const POLYMARKET_V2_OO_REPORTER = "0x53703dd6129d723066b6362510e5ae2fecd48218";
+
+// ethers v5 assumes a 1.5 gwei tip, which Polygon nodes reject as underpriced. These floors apply before the
+// multiplier and can be overridden with MIN_PRIORITY_FEE_GWEI.
+export const MIN_PRIORITY_FEE_GWEI: Record<number, number> = { [POLYGON_CHAIN_ID]: 30 };
+export const DEFAULT_MIN_PRIORITY_FEE_GWEI = 1.5;
+
+// Disputes per transaction. The DisputeBatcher fork test used ~6.7M gas for 20 disputes with Polymarket-style
+// re-requesting callbacks (~335k each).
+export const DEFAULT_BATCH_SIZE = 20;
+// Gas budgeted per dispute in a batch. Batches are NOT sized with estimateGas: the batcher wraps each dispute in
+// try/catch, so the lowest non-reverting gas limit can silently skip the last disputes with out-of-gas.
+export const DEFAULT_GAS_PER_DISPUTE = 500_000;
+export const BATCH_GAS_OVERHEAD = 200_000;
+export const DEFAULT_RPC_CONCURRENCY = 10;
+// Proposals expiring within this many seconds are not worth sending: the transaction would likely land too late.
+export const EXPIRY_SAFETY_MARGIN_SECONDS = 20;
 
 export enum RequestState {
     Invalid = 0,
@@ -22,5 +47,4 @@ export enum RequestState {
 }
 
 export const DISPUTE_CONFIRMATION_PROMPT = `
-👉 Do you want to dispute this proposal? (yes/no) 
-`;
+👉 Dispute this proposal? [y]es (queue) / [s]end now (queue and send) / [n]o / [q]uit reviewing: `;

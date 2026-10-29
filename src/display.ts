@@ -1,10 +1,11 @@
 import { ethers } from "ethers";
-import { fetchWalletTokenBalance, tryHexToUtf8String } from "./contracts";
-import { Proposal } from "./proposals";
+import { getERC20ContractInstance, tryHexToUtf8String } from "./contracts";
+import { disputableAfterLiveness, Proposal } from "./proposals";
 
 import { Config } from "./config";
 
-function formatExpiryTime(seconds: number): string {
+export function formatExpiryTime(seconds: number): string {
+  if (seconds <= 0) return "EXPIRED";
   const minutes = Math.floor(seconds / 60);
   const hours = Math.floor(minutes / 60);
   const days = Math.floor(hours / 24);
@@ -30,19 +31,15 @@ function getColorCode(color: string): string {
   return colors[color] || colors.reset; // Default to reset if color not found
 }
 
-export async function displayProposalInfo(proposal: Proposal, config: Config) {
-  const currentBlockNumber = await config.provider.getBlockNumber();
-  const block = await config.provider.getBlock(currentBlockNumber);
-  const currentTimestamp = block.timestamp;
-
+export async function displayProposalInfo(proposal: Proposal, config: Config, currentTimestamp: number, queued: number) {
   const ancillaryData = decodeProposalData(proposal.ancillaryData);
-  const rawAnswer = proposal.proposedPrice;
-  const answer = ethers.utils.formatEther(rawAnswer);
+  const answer = ethers.utils.formatEther(proposal.proposedPrice);
   const bondValue = ethers.utils.formatUnits(proposal.bond, proposal.bondCurrencyDecimals);
-  const expiryTime = formatExpiryTime(proposal.proposalExpirationTimestamp.sub(currentTimestamp).toNumber());
+  const secondsLeft = proposal.proposalExpirationTimestamp.sub(currentTimestamp).toNumber();
+  const expiryTime = secondsLeft <= 0 && disputableAfterLiveness(proposal.oracleKind) ? "liveness ended, still disputable until the resolver settles" : formatExpiryTime(secondsLeft);
 
-  const walletBalance = await fetchWalletTokenBalance(config, proposal.bondCurrency);
-  const walletBalanceFormatted = ethers.utils.formatUnits(walletBalance.balance, walletBalance.decimals);
+  const balance = await getERC20ContractInstance(config.provider, proposal.bondCurrency).balanceOf(config.wallet.address);
+  const walletBalanceFormatted = ethers.utils.formatUnits(balance, proposal.bondCurrencyDecimals);
 
   console.log(`
 --------------------------------------------------------------------------------
@@ -52,9 +49,13 @@ export async function displayProposalInfo(proposal: Proposal, config: Config) {
 
 📋 Answer: ${colorize(answer, "darkBlue")}
 
+🙋 Proposer: ${colorize(proposal.proposer, "darkGrey")} - Oracle: ${colorize(`${proposal.oracleKind} ${proposal.ooAddress}`, "darkGrey")}
+
 💰 Bond Value: ${colorize(bondValue + " " + proposal.bondCurrencySymbol, "darkBlue")} - Available: ${colorize(walletBalanceFormatted + " " + proposal.bondCurrencySymbol, "darkGrey")}
 
 ⏳ Time to Expiry: ${colorize(expiryTime, "orange")}
+
+📥 Queued disputes: ${queued}
 --------------------------------------------------------------------------------`);
 
 }
