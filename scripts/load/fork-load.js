@@ -103,8 +103,6 @@ async function setup(dir) {
         `NODE_URL_137=${RPC}`,
         `OOV2_ADDRESS=${oo.address}`,
         `START_BLOCK=${startBlock}`,
-        // Per-block log queries: the paginator would otherwise round ranges down into pre-fork blocks.
-        "MAX_BLOCK_LOOK_BACK=1",
         "SCAN_INTERVAL_SECONDS=10",
         `REVIEW_DB=${path.resolve(dir, "review.sqlite")}`,
     ];

@@ -1,10 +1,11 @@
-import { paginatedEventQuery } from "@uma/common";
-import { DisputePriceEvent, ProposePriceEvent, SettleEvent } from "@uma/contracts-node/dist/packages/contracts-node/typechain/core/ethers/OptimisticOracleV2";
+import { createHash } from "crypto";
 import { BigNumber } from "ethers";
 import { Config, OracleConfig, OracleKind, SortOrder } from "./config";
 import { POLYMARKET_REQUESTER_ADDRESSES } from "./constants";
 import { mapWithConcurrency, withRetry } from "./concurrency";
 import { getERC20ContractInstance, getOOV2ContractInstance } from "./contracts";
+import { getLogs } from "./rpc";
+import type { Log } from "@ethersproject/abstract-provider";
 
 export interface RequestKey {
     requester: string;
@@ -34,6 +35,20 @@ export function requestKeyId(key: RequestKey): string {
     return [key.requester.toLowerCase(), key.identifier.toLowerCase(), key.timestamp.toString(), key.ancillaryData.toLowerCase()].join(":");
 }
 
+// Short, stable ID for a request. The full request key embeds the ancillary data (often >1 KB), which agents would
+// have to copy back verbatim and which is too big to keep in memory for a day of proposals.
+export function proposalId(key: RequestKey): string {
+    return `p_${createHash("sha256").update(requestKeyId(key)).digest("hex").slice(0, 16)}`;
+}
+
+// Inclusive block ranges of at most `size` blocks covering [from, to] exactly (no rounding before `from`, which on a
+// fork would reach into pre-fork blocks).
+export function blockRanges(from: number, to: number, size: number): [number, number][] {
+    const ranges: [number, number][] = [];
+    for (let start = Math.max(0, from); start <= to; start += size) ranges.push([start, Math.min(start + size - 1, to)]);
+    return ranges;
+}
+
 export function requestKeyArgs(key: RequestKey): [string, string, BigNumber, string] {
     return [key.requester, key.identifier, key.timestamp, key.ancillaryData];
 }
@@ -53,12 +68,15 @@ export function filterOpenProposals<T extends { args: ProposeArgs }>(
     onlyPolymarket: boolean,
     { keepExpired = false, settleEvents = [] as { args: RequestKey }[] } = {}
 ): T[] {
-    const closed = new Set([...disputeEvents, ...settleEvents].map((event) => requestKeyId(event.args)));
-    const polymarket = new Set(POLYMARKET_REQUESTER_ADDRESSES.map((r) => r.toLowerCase()));
-    return proposeEvents
-        .filter((event) => !onlyPolymarket || polymarket.has(event.args.requester.toLowerCase()))
-        .filter((event) => !closed.has(requestKeyId(event.args)))
-        .filter((event) => keepExpired || event.args.expirationTimestamp.gt(currentTimestamp));
+    const closed = new Set([...disputeEvents, ...settleEvents].map((event) => proposalId(event.args)));
+    return proposeEvents.filter((event) => isCandidate(event.args, currentTimestamp, onlyPolymarket, keepExpired) && !closed.has(proposalId(event.args)));
+}
+
+const POLYMARKET_REQUESTERS = new Set(POLYMARKET_REQUESTER_ADDRESSES.map((r) => r.toLowerCase()));
+
+function isCandidate(args: ProposeArgs, currentTimestamp: number, onlyPolymarket: boolean, keepExpired: boolean): boolean {
+    if (onlyPolymarket && !POLYMARKET_REQUESTERS.has(args.requester.toLowerCase())) return false;
+    return keepExpired || args.expirationTimestamp.gt(currentTimestamp);
 }
 
 // Fisher-Yates; `sort(() => Math.random() - 0.5)` is biased.
@@ -102,18 +120,67 @@ function getTokenMetadata(config: Config, address: string) {
 
 // Scans one oracle over [fromBlock, toBlock]: open proposals (enriched with live bond data) and every request disputed
 // in the range, so callers can also retire proposals they found earlier.
-export async function scanOracleRange(config: Config, oracle: OracleConfig, fromBlock: number, toBlock: number, currentTimestamp: number) {
-    const searchConfig = { fromBlock: Math.max(0, fromBlock), toBlock, maxBlockLookBack: config.maxBlockLookBack };
-    const oo = await getOOV2ContractInstance(config.provider, oracle.address);
+interface OpenEvent {
+    args: ProposeArgs & { proposer: string; proposedPrice: BigNumber };
+    address: string;
+    transactionHash: string;
+    logIndex: number;
+    blockNumber: number;
+}
 
+export async function scanOracleRange(config: Config, oracle: OracleConfig, fromBlock: number, toBlock: number, currentTimestamp: number) {
+    const oo = await getOOV2ContractInstance(config.provider, oracle.address);
     const keepExpired = disputableAfterLiveness(oracle.kind);
-    const [proposeEvents, disputeEvents, settleEvents] = await Promise.all([
-        withRetry(() => paginatedEventQuery<ProposePriceEvent>(oo, oo.filters.ProposePrice(null, null, null, null, null, null, null, null), searchConfig)),
-        withRetry(() => paginatedEventQuery<DisputePriceEvent>(oo, oo.filters.DisputePrice(null, null, null, null, null, null, null), searchConfig)),
-        // Only needed where proposals outlive their liveness: there, settlement is what closes them.
-        keepExpired ? withRetry(() => paginatedEventQuery<SettleEvent>(oo, oo.filters.Settle(null, null, null, null, null, null, null, null), searchConfig)) : Promise.resolve([] as SettleEvent[]),
-    ]);
-    const events = filterOpenProposals(proposeEvents, disputeEvents, currentTimestamp, config.onlyPolymarket, { keepExpired, settleEvents });
+
+    // Page by page, keeping only proposals that are still open: a day of Managed OOv2 traffic is ~20k proposals with
+    // KBs of ancillary data each, which does not fit in memory as ethers events. Disputes and settlements close a proposal whichever page they arrive in, so pages can be
+    // processed in any order.
+    const open = new Map<string, OpenEvent>();
+    const closed = new Set<string>();
+    const disputedIds: string[] = [];
+    const settledIds: string[] = [];
+    // RPCs cap eth_getLogs by block range or response size (Alchemy: 2,000 blocks once the response is large), so a
+    // rejected range is split in halves until it fits.
+    const logs = async (name: string, fromBlock: number, toBlock: number): Promise<Log[]> => {
+        const filter = { address: oracle.address, topics: [oo.interface.getEventTopic(name)], fromBlock, toBlock };
+        try {
+            return await withRetry(() => (config.rpcUrls.length ? getLogs(config.rpcUrls, filter) : config.provider.getLogs(filter)), 1);
+        } catch (error) {
+            if (fromBlock === toBlock) throw error;
+            const middle = Math.floor((fromBlock + toBlock) / 2);
+            return [...(await logs(name, fromBlock, middle)), ...(await logs(name, middle + 1, toBlock))];
+        }
+    };
+    await mapWithConcurrency(blockRanges(fromBlock, toBlock, config.maxBlockLookBack), 4, async ([from, to]) => {
+        const [proposals, disputes, settles] = await Promise.all([
+            logs("ProposePrice", from, to),
+            logs("DisputePrice", from, to),
+            // Only needed where proposals outlive their liveness: there, settlement is what closes them.
+            keepExpired ? logs("Settle", from, to) : Promise.resolve([]),
+        ]);
+        for (const [entries, ids] of [[disputes, disputedIds], [settles, settledIds]] as const) {
+            for (const log of entries) {
+                const id = proposalId(oo.interface.parseLog(log).args as unknown as RequestKey);
+                closed.add(id);
+                open.delete(id);
+                ids.push(id);
+            }
+        }
+        for (const log of proposals) {
+            const args = oo.interface.parseLog(log).args as unknown as OpenEvent["args"];
+            const id = proposalId(args);
+            if (closed.has(id) || !isCandidate(args, currentTimestamp, config.onlyPolymarket, keepExpired)) continue;
+            const { requester, identifier, timestamp, ancillaryData, proposer, proposedPrice, expirationTimestamp } = args;
+            open.set(id, {
+                args: { requester, identifier, timestamp, ancillaryData, proposer, proposedPrice, expirationTimestamp },
+                address: log.address,
+                transactionHash: log.transactionHash,
+                logIndex: log.logIndex,
+                blockNumber: log.blockNumber,
+            });
+        }
+    });
+    const events = [...open.values()];
 
     let failed = 0;
     const loaded = await mapWithConcurrency(events, config.rpcConcurrency, async (event) => {
@@ -148,8 +215,8 @@ export async function scanOracleRange(config: Config, oracle: OracleConfig, from
 
     return {
         proposals: loaded.filter((p): p is Proposal => p !== undefined),
-        disputedIds: disputeEvents.map((event) => requestKeyId(event.args)),
-        settledIds: settleEvents.map((event) => requestKeyId(event.args)),
+        disputedIds,
+        settledIds,
         failed,
     };
 }

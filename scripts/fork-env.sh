@@ -52,7 +52,6 @@ CHAIN_ID=137
 NODE_URLS_137=["$RPC"]
 NODE_URL_137=$RPC
 START_BLOCK=$((FORK_BLOCK + 1))
-MAX_BLOCK_LOOK_BACK=1
 REVIEW_DB=$DIR/review.sqlite
 EOF
     # For 'yarn apply' in a terminal: the same settings plus the fork's test disputer key and batcher.

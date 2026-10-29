@@ -14,6 +14,7 @@ import {
     POLYGON_OOV2_ADDRESS,
 } from "./constants";
 import { getAddress } from "@uma/contracts-node";
+import { rpcUrls } from "./rpc";
 
 export type OracleKind = "oov2" | "managed";
 export type SortOrder = "time" | "bond" | "random" | "age";
@@ -25,6 +26,8 @@ export interface OracleConfig {
 
 export interface Config {
     provider: Provider;
+    // Same RPCs as `provider`, for bulk log reads that bypass ethers (see rpc.ts). Empty: use `provider`.
+    rpcUrls: string[];
     chainId: number;
     maxBlockLookBack: number;
     onlyPolymarket: boolean;
@@ -111,6 +114,7 @@ export const initConfig = async (env: NodeJS.ProcessEnv, options: Options, { rea
 
     return {
         provider,
+        rpcUrls: rpcUrls(env, chainId),
         chainId,
         maxBlockLookBack: parseNumber("MAX_BLOCK_LOOK_BACK", env.MAX_BLOCK_LOOK_BACK, 3499, { integer: true, min: 1 }),
         onlyPolymarket: options.onlyPolymarket,

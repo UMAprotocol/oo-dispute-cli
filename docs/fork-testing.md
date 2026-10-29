@@ -104,4 +104,4 @@ pieces, and `scripts/load/run.sh` orchestrates them. The `DisputeBatcher` byteco
 `scripts/fixtures/DisputeBatcher.json`, built from UMAprotocol/mcp-otb#2826.
 
 **If your fork RPC rejects historical log ranges**, set `START_BLOCK` (or `BLOCK_LOOKBACK_PERIOD`) to cover only blocks
-mined on the fork, and set `MAX_BLOCK_LOOK_BACK=1`.
+mined on the fork.

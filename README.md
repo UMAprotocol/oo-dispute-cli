@@ -45,8 +45,8 @@ Always try `--dry-run` first: it reads, re-checks and simulates everything, but 
 - Node.js **22.13 or later** (the agent queue uses the built-in `node:sqlite`). `yarn dispute` alone also runs on
   Node 18.
 - yarn 1.22.
-- A Polygon RPC that allows `eth_getLogs` over ~3,500 blocks; otherwise set `MAX_BLOCK_LOOK_BACK`. Configure two
-  providers in `NODE_URLS_137` so one can fail.
+- A Polygon RPC that serves `eth_getLogs` (ranges it rejects are split automatically). Configure two providers in
+  `NODE_URLS_137` so one can fail.
 - For fork rehearsals: [Foundry](https://getfoundry.sh) (`anvil`) and an RPC that serves historical state.
 
 ## Wallet, funds and keys
@@ -145,7 +145,7 @@ To stress-test the queue with thousands of simultaneous proposals, without spend
 
 ## Pre-election checklist
 
-- [ ] Two working Polygon RPCs in `NODE_URLS_137`, both allowing `eth_getLogs` ranges (or a lower `MAX_BLOCK_LOOK_BACK`).
+- [ ] Two working Polygon RPCs in `NODE_URLS_137`, both serving `eth_getLogs`.
 - [ ] A dedicated wallet funded with USDC.e for bonds and POL for gas, with approvals done.
 - [ ] `yarn select resolve selections/midterms-2026.json` re-run in the last day.
 - [ ] A rehearsal done (`yarn fork:up` … `yarn fork:down`), and `.oo-dispute/mcp.env` points at mainnet again.
@@ -158,7 +158,7 @@ To stress-test the queue with thousands of simultaneous proposals, without spend
 |---|---|
 | `secp256k1 unavailable, reverting to browser version` | Harmless. |
 | `CHAIN_ID is not set` / `No RPC configured` | Export the variables, put them in `.env` (CLI), or in `.oo-dispute/mcp.env` (agents). |
-| `exceed maximum block range`, `ranges over 10000 blocks…` | The RPC limits `eth_getLogs`: set `MAX_BLOCK_LOOK_BACK=1000` (or lower), or use another provider. |
+| `exceed maximum block range`, `Log response size exceeded`, slow scans | Rejected ranges are halved automatically; if scans stay slow, set `MAX_BLOCK_LOOK_BACK=1000` (or lower), or use another provider. |
 | `oo-dispute` server missing or "failed to start" in Claude Code | Run `yarn build`, open a new session in this folder, and check `.oo-dispute/mcp.env`. If the desktop app can't find `node` (nvm, mise…), put the absolute path to `node` in your local `.mcp.json`. |
 | The agents see fork proposals during a real incident | A leftover `.oo-dispute/mcp.env` from a rehearsal: run `yarn fork:down` and recreate it. |
 | `apply` finds no candidates | Use the same `CHAIN_ID`/RPC and `--scope` as the agents, and don't point `--db`/`REVIEW_DB` elsewhere. |

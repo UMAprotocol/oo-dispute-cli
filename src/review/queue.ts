@@ -16,7 +16,7 @@ import {
     VERDICTS,
     verdictPrice,
 } from "../polymarket";
-import { disputableAfterLiveness, Proposal, RequestKey, requestKeyId, scanOracleRange } from "../proposals";
+import { disputableAfterLiveness, Proposal, proposalId, scanOracleRange } from "../proposals";
 import { evaluate, Evaluation, needsReview, recheckTime, ReviewPolicy } from "./policy";
 import { compileSelection, describeSelection, EventGroup, needsResolution, parseSelection, resolveSelection, Selection } from "./selection";
 import { GroupRow, now, ProposalContext, ReviewStore, StoredProposal } from "./store";
@@ -48,11 +48,7 @@ function sha(text: string) {
     return createHash("sha256").update(text).digest("hex").slice(0, 16);
 }
 
-// Short, stable ID for a request. The full request key embeds the ancillary data (often >1 KB), which agents would
-// have to copy back verbatim.
-export function proposalId(key: RequestKey): string {
-    return `p_${sha(requestKeyId(key))}`;
-}
+export { proposalId };
 
 // The Polymarket event is the best key: all lines of one match share it, and two matches built from the same market
 // template (identical rules text) never do. Identical rules text is only a fallback when the event is unknown.
@@ -155,8 +151,8 @@ export class ReviewQueue {
                 if (fromBlock > block.number) continue;
                 const scan = await scanOracleRange(config, oracle, fromBlock, block.number, block.timestamp);
                 added += await this.ingest(scan.proposals);
-                store.markDisputed(scan.disputedIds.map((key) => `p_${sha(key)}`));
-                store.markSettled(scan.settledIds.map((key) => `p_${sha(key)}`));
+                store.markDisputed(scan.disputedIds);
+                store.markSettled(scan.settledIds);
                 // A failed load must be retried by the next scan, so only advance past ranges that loaded fully.
                 if (scan.failed === 0) store.setMeta(key, String(block.number));
             }
