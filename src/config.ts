@@ -92,12 +92,16 @@ async function resolveOracles(chainId: number, options: Options): Promise<Oracle
 
 // readOnly: the MCP review server never signs, so it must not need (or see) the private key.
 export const initConfig = async (env: NodeJS.ProcessEnv, options: Options, { readOnly = false } = {}): Promise<Config> => {
-    if (!env.CHAIN_ID) throw new Error("CHAIN_ID must be defined in env");
+    const where = readOnly ? "set it in .oo-dispute/mcp.env (agents) or the environment" : "export it or put it in .env";
+    if (!env.CHAIN_ID) throw new Error(`CHAIN_ID is not set (137 for Polygon): ${where}`);
     const chainId = parseNumber("CHAIN_ID", env.CHAIN_ID, 0, { integer: true, min: 1 });
 
+    if (!env[`NODE_URLS_${chainId}`] && !env[`NODE_URL_${chainId}`]) {
+        throw new Error(`No RPC configured: set NODE_URLS_${chainId}='["https://rpc-1","https://rpc-2"]' or NODE_URL_${chainId}; ${where}`);
+    }
     const provider = getRetryProvider(chainId) as Provider;
 
-    if (!readOnly && !env.PRIVATE_KEY) throw new Error("PRIVATE_KEY must be defined in env");
+    if (!readOnly && !env.PRIVATE_KEY) throw new Error("PRIVATE_KEY is not set: export it (read -rs PRIVATE_KEY && export PRIVATE_KEY) or put it in .env");
     const wallet = (readOnly ? ethers.Wallet.createRandom() : new ethers.Wallet(env.PRIVATE_KEY!)).connect(provider);
 
     const disputeBatcherAddress = env.DISPUTE_BATCHER_ADDRESS || undefined;

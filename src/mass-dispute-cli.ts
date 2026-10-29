@@ -1,3 +1,6 @@
+// Settings and the key can come from a .env in the working directory (variables already set win). Only the CLI loads
+// it on purpose; the MCP review server never takes PRIVATE_KEY (see mcp-entry).
+import 'dotenv/config';
 import { Command } from 'commander';
 import { handleCLI } from './handler';
 
@@ -5,7 +8,7 @@ const program = new Command();
 
 program
     .command('dispute')
-    .description('Dispute a proposal')
+    .description('Review open proposals one by one in the terminal and dispute the wrong ones')
     .option('-m, --multiplier <number>', 'Gas fee multiplier applied to the priority fee', '4')
     .option('-t, --sort-remaining-time', 'Sort disputes by remaining time to dispute (ascending). This is the default', false)
     .option('-b, --sort-bond-size', 'Sort disputes by bond size (descending)', false)

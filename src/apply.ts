@@ -2,6 +2,7 @@ import * as readline from "readline";
 import { existsSync, readFileSync } from "fs";
 import { BigNumber, ethers } from "ethers";
 import { initConfig } from "./config";
+import { userPath } from "./paths";
 import { delay } from "./concurrency";
 import { DisputeEngine, DisputeStatus } from "./dispute";
 import { isYesAnswer } from "./display";
@@ -54,7 +55,8 @@ async function runApply(options: ApplyOptions, ask: (question: string) => Promis
     }
 
     // A selection file is registered as a scope first, so apply and the agents share it by name.
-    const scope = options.scope && existsSync(options.scope) ? (await queue.defineScope(JSON.parse(readFileSync(options.scope, "utf8")))).name : options.scope;
+    const scopeFile = options.scope && /\.json$/.test(options.scope) ? userPath(options.scope) : undefined;
+    const scope = scopeFile && existsSync(scopeFile) ? (await queue.defineScope(JSON.parse(readFileSync(scopeFile, "utf8")))).name : options.scope;
     if (scope) queue.scopeMatch(scope); // fail fast on an unknown scope
 
     // We hold the apply lock, so any "sending" row is left over from a run that died mid-send. Clear it: the proposal

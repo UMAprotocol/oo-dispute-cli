@@ -49,14 +49,16 @@ up() {
     cat > "$MCP_ENV" <<EOF
 # Written by 'yarn fork:up'. Points the review MCP server at the local fork; 'yarn fork:down' removes it.
 CHAIN_ID=137
+NODE_URLS_137=["$RPC"]
 NODE_URL_137=$RPC
 START_BLOCK=$((FORK_BLOCK + 1))
 MAX_BLOCK_LOOK_BACK=1
 REVIEW_DB=$DIR/review.sqlite
 EOF
     # For 'yarn apply' in a terminal: the same settings plus the fork's test disputer key and batcher.
-    # NODE_URLS_137 takes precedence over NODE_URL_137, so clear it in case the shell points at mainnet RPCs.
-    { echo "unset NODE_URLS_137"; { grep -v '^#' "$MCP_ENV"; echo "PRIVATE_KEY=$KEY"; echo "DISPUTE_BATCHER_ADDRESS=$BATCHER"; } | sed 's/^/export /'; } > "$DIR/apply.env"
+    # NODE_URLS_137 takes precedence over NODE_URL_137, so it points at the fork too (whatever the shell had).
+    # Values are single-quoted so zsh does not treat the JSON brackets as a glob.
+    { echo "unset NODE_URLS_137"; { grep -v '^#' "$MCP_ENV"; echo "PRIVATE_KEY=$KEY"; echo "DISPUTE_BATCHER_ADDRESS=$BATCHER"; } | sed -E "s/^([A-Z0-9_]+)=(.*)$/export \\1='\\2'/"; } > "$DIR/apply.env"
 
     cat <<EOF
 

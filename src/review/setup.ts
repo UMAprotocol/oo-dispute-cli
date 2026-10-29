@@ -1,4 +1,4 @@
-import { join } from "path";
+import { repoPath, userPath } from "../paths";
 import { Config } from "../config";
 import { ReviewPolicy } from "./policy";
 import { ReviewQueue } from "./queue";
@@ -15,7 +15,8 @@ export interface ReviewFlags {
 const DEFAULT_POLICY: ReviewPolicy = { minConfidence: 0.8, minConfirmations: 1 };
 
 export function reviewDbPath(config: Config, db?: string) {
-    return db || process.env.REVIEW_DB || join(process.cwd(), ".oo-dispute", `review-${config.chainId}.sqlite`);
+    const explicit = db || process.env.REVIEW_DB;
+    return explicit ? userPath(explicit) : repoPath(".oo-dispute", `review-${config.chainId}.sqlite`);
 }
 
 // The dispute policy lives in the database so every MCP process and `apply` use the same thresholds. Flags given

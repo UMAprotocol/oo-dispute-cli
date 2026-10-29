@@ -6,13 +6,14 @@ console.warn = console.error;
 console.debug = console.error;
 
 import { existsSync, readFileSync } from "fs";
-import { resolve } from "path";
+import { repoPath, userPath } from "./paths";
 
 // Agents launched from a desktop app don't inherit shell variables, so settings can also come from a KEY=VALUE file
-// (OO_DISPUTE_ENV_FILE, default .oo-dispute/mcp.env). Values already set win. PRIVATE_KEY is never loaded: the
-// review server must not hold the key.
+// (OO_DISPUTE_ENV_FILE, default .oo-dispute/mcp.env in the repository). The file wins over the environment, so what it says is what the
+// server uses (a mainnet NODE_URLS_137 exported in the shell must not leak into a fork rehearsal). PRIVATE_KEY is never
+// loaded: the review server must not hold the key.
 function loadEnvFile() {
-    const path = resolve(process.env.OO_DISPUTE_ENV_FILE || ".oo-dispute/mcp.env");
+    const path = process.env.OO_DISPUTE_ENV_FILE ? userPath(process.env.OO_DISPUTE_ENV_FILE) : repoPath(".oo-dispute", "mcp.env");
     if (!existsSync(path)) return;
     for (const line of readFileSync(path, "utf8").split("\n")) {
         const match = line.match(/^\s*(?:export\s+)?([A-Z0-9_]+)\s*=\s*(.*?)\s*$/);
@@ -22,7 +23,7 @@ function loadEnvFile() {
             console.error(`Ignoring PRIVATE_KEY in ${path}: the review server never signs.`);
             continue;
         }
-        if (!process.env[key]) process.env[key] = raw.replace(/^(['"])(.*)\1$/, "$2");
+        process.env[key] = raw.replace(/^(['"])(.*)\1$/, "$2");
     }
     console.error(`Loaded settings from ${path}`);
 }
@@ -32,6 +33,8 @@ delete process.env.PRIVATE_KEY;
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const { startMcpServer } = require("./mcp-server") as typeof import("./mcp-server");
+// Importing @uma/common runs dotenv, which re-reads a .env in the working directory: remove the key again.
+delete process.env.PRIVATE_KEY;
 
 startMcpServer(process.argv.slice(2)).catch((error) => {
     console.error(`oo-dispute MCP failed to start: ${error}`);

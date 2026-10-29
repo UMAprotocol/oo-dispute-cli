@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { Command } from "commander";
 import { readFileSync } from "fs";
+import { userPath } from "./paths";
 import { z } from "zod";
 import { initConfig } from "./config";
 import { Options } from "./handler";
@@ -41,6 +42,8 @@ const criteria = z
 const agentName = z.string().min(1).max(64).describe("Your reviewer name, unique per parallel reviewer, e.g. reviewer-1");
 
 export async function startMcpServer(argv: string[]) {
+    // The review server never signs. Keep the key out of its environment even if a .env provides one.
+    delete process.env.PRIVATE_KEY;
     const program = new Command()
         .option("-o, --oracle <which>", "all, oov2 or managed", "all")
         .option("-p, --only-polymarket", "Only Polymarket requesters", false)
@@ -72,7 +75,7 @@ export async function startMcpServer(argv: string[]) {
     const selectionFiles = [...(flags.select ?? []), ...(process.env.REVIEW_SELECTION ?? "").split(",").map((p) => p.trim()).filter(Boolean)];
     const loaded: string[] = [];
     for (const file of selectionFiles) {
-        const scope = await queue.defineScope(JSON.parse(readFileSync(file, "utf8")));
+        const scope = await queue.defineScope(JSON.parse(readFileSync(userPath(file), "utf8")));
         loaded.push(scope.name);
         console.error(`Scope "${scope.name}" from ${file}: ${scope.open_proposals_matching} open proposals match${scope.unresolved.length ? `; unresolved: ${scope.unresolved.join(", ")}` : ""}`);
     }

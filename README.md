@@ -1,254 +1,252 @@
-# Optimistic Oracle Dispute CLI Tool
+# Optimistic Oracle Dispute CLI
 
-## Overview
+A last-resort tool for disputing wrong UMA Optimistic Oracle proposals (mostly Polymarket markets on Polygon) when the
+usual tools and APIs are down. It talks to the chain through your own RPC. There are two ways to use it:
 
-The OO Dispute CLI is a last-resort command-line tool for disputing many UMA Optimistic Oracle V2 proposals quickly, when the usual UIs and APIs are unavailable. It talks to the chain directly through your own RPC nodes.
+- **In a terminal:** review open proposals one by one and dispute the wrong ones.
+- **With agents:** Claude Code or Codex review proposals in parallel from a shared queue (through a local MCP
+  server), and a human sends the disputes with one command.
 
-It scans the permissionless OOv2 and, on Polygon, the Managed OOv2 in one run. It shows each open proposal (most urgent first), and sends the ones you approve in batches:
+Disputes go out in batches: through the `DisputeBatcher` on the permissionless OOv2, and through the Managed OOv2's
+own `multicall`. If batching fails, it falls back to one transaction per dispute.
 
-- **Permissionless OOv2:** through the `DisputeBatcher` contract, up to 20 disputes per transaction. Your wallet is still the recorded disputer and receives the payout.
-- **Managed OOv2:** through the oracle's own `multicall`.
-- **Fallback:** one transaction per dispute, sent back to back. Used with `--no-batch`, when `DISPUTE_BATCHER_ADDRESS` is unset, or when the batcher fails its startup check or a batch can't be sent.
+## Quickstart
 
-Before sending, every dispute is re-checked against live chain state and simulated. Afterwards, results are confirmed from the oracle's `DisputePrice` logs and live state. Proposals that are still open after a batch are retried one by one.
+```bash
+yarn install --frozen-lockfile && yarn build
+```
+
+Then configure the chain, the RPC and the key. Either copy `.env.example` to `.env` and fill it in, or export them
+in the shell:
+
+```bash
+export CHAIN_ID=137 NODE_URLS_137='["https://<rpc-1>","https://<rpc-2>"]'
+```
+
+```bash
+read -rs PRIVATE_KEY && export PRIVATE_KEY
+```
+
+The second command asks for the key without echoing it and keeps it out of your shell history. Use a dedicated
+wallet (see [Wallet, funds and keys](#wallet-funds-and-keys)).
+
+Then pick a path:
+
+| Situation | Use |
+|---|---|
+| A handful of proposals to check, by hand | **[A. Terminal](#a-dispute-from-the-terminal)**: `yarn dispute -p` |
+| Hundreds or thousands (e.g. election night) | **[B. Agents](#b-review-with-agents-claude-code-or-codex)**: MCP review + `yarn apply --watch` |
+| First time, or before an incident | **[C. Rehearse on a fork](#c-rehearse-on-a-fork)**: `yarn fork:up`, nothing real is touched |
+
+Always try `--dry-run` first: it reads, re-checks and simulates everything, but approves and sends nothing.
 
 ## Prerequisites
 
-- Node.js 18 or higher for `yarn dispute`. The agent review queue (`yarn mcp`, `yarn apply`) needs 22.13 or higher,
-  because it uses the built-in `node:sqlite`.
-- yarn (version 1.22.19 or higher)
+- Node.js **22.13 or later** (the agent queue uses the built-in `node:sqlite`). `yarn dispute` alone also runs on
+  Node 18.
+- yarn 1.22.
+- A Polygon RPC that allows `eth_getLogs` over ~3,500 blocks; otherwise set `MAX_BLOCK_LOOK_BACK`. Configure two
+  providers in `NODE_URLS_137` so one can fail.
+- For fork rehearsals: [Foundry](https://getfoundry.sh) (`anvil`) and an RPC that serves historical state.
 
-## Installation
+## Wallet, funds and keys
 
-1. **Install dependencies:**
+- **A dedicated hot wallet**, holding only what it may post.
+- **Bonds:** each dispute posts the proposer's bond plus UMA's final fee, in the bond token (USDC.e for Polymarket).
+  `apply` shows it per proposal. Midterm markets bond $750 (House) to $2,750 (statewide) each, and the 515 midterm
+  events total about $5.5M in bonds. Plan for the share you expect to dispute.
+- **Gas:** POL. A batch of 20 disputes uses up to ~7M gas.
+- **Approvals:** the first send asks to approve the bond token for the contract that pulls the bond (the
+  `DisputeBatcher` or the Managed OOv2). Approving ahead of time avoids that prompt mid-incident.
+- **Key handling:**
+  - Only `yarn dispute` and `yarn apply` read `PRIVATE_KEY`, from the environment or a `.env` (gitignored).
+  - The MCP server that agents use never takes it, even if a `.env` defines it.
+  - Never paste the key into an agent chat.
+- **DisputeBatcher:** not deployed on Polygon yet (UMAprotocol/mcp-otb#2826). Leave `DISPUTE_BATCHER_ADDRESS` empty
+  until it is. Permissionless OOv2 disputes then go one per transaction; Managed OOv2 disputes are batched either way.
 
-```bash
-yarn install --frozen-lockfile
-```
-
-2. **Build the project:**
-
-```bash
-yarn build
-```
-
-3. **Run the unit tests (optional):**
-
-```bash
-yarn test
-```
-
-## Usage
-
-### Starting the CLI
+## A. Dispute from the terminal
 
 ```bash
-yarn dispute
+yarn dispute -p --dry-run
 ```
 
-For each proposal the CLI asks:
+The command lists open Polymarket proposals on both oracles, most urgent first. For each one you answer:
 
-- `y`: queue the dispute.
-- `s`: queue it and send the queue now.
-- `n`: skip.
-- `q`: stop reviewing and send whatever is queued.
+| Key | Action |
+|---|---|
+| `y` | queue the dispute |
+| `s` | queue it and send the queue now |
+| `n` | skip |
+| `q` | stop reviewing and send what is queued |
 
-The queue is also sent automatically when it reaches the batch size, when a queued proposal is within `--flush-before` minutes of expiry, and at the end. If the bond token isn't approved for the contract that pulls the bond (the `DisputeBatcher` or the oracle), the CLI asks before approving it.
+The queue is also sent when it's full, or when a queued proposal is about to expire. Drop `--dry-run` to send for
+real. Managed OOv2 proposals past their liveness are still shown: they can be disputed until the resolver settles
+them.
 
-### Arguments
+## B. Review with agents (Claude Code or Codex)
 
-- `-h` or `--help`: Display help information.
-- `-m` or `--multiplier`: Multiplier applied to the priority fee (default is 4). Decimals such as `1.5` are allowed.
-- `-t` or `--sort-remaining-time`: Sort by remaining time to dispute, ascending. This is the default.
-- `-b` or `--sort-bond-size`: Sort by bond size, descending.
-- `-r` or `--sort-random`: Sort randomly.
-- `-a` or `--sort-age`: Keep proposals in event order, per oracle.
-- `-p` or `--only-polymarket`: Only consider proposals requested from the addresses in `POLYMARKET_REQUESTER_ADDRESSES` in `constants.ts`.
-- `-o` or `--oracle <all|oov2|managed>`: Which oracles to scan (default `all`). `managed` is Polygon only. `--managed-oo` is a deprecated alias for `--oracle managed`.
-- `--no-batch`: Send one dispute per transaction.
-- `--batch-size <n>`: Disputes per batch transaction (default 20).
-- `--flush-before <minutes>`: Send the queue when a queued proposal expires within this many minutes (default 10).
-- `-d` or `--dry-run`: Read, re-check and simulate everything, but approve and send nothing. A batch can only be simulated if the bond token is already approved for the contract that pulls it; otherwise the dry run says so.
+Agents review; you send. Nothing is hosted: the agent starts the MCP server (`dist/mcp-entry.js`) as a local
+process, and it keeps a shared queue in `.oo-dispute/review-137.sqlite` in this repo.
 
-> **Note:** Only one sort option can be applied.
+1. **Build:** `yarn build`.
+2. **Give the MCP server its settings.** The Claude desktop app doesn't pass your shell variables, so put them in
+   `.oo-dispute/mcp.env`:
+   ```bash
+   mkdir -p .oo-dispute && printf 'CHAIN_ID=137\nNODE_URLS_137=["https://<rpc-1>","https://<rpc-2>"]\nREVIEW_SELECTION=selections/midterms-2026.resolved.json\n' > .oo-dispute/mcp.env
+   ```
+   - This file **wins over shell variables**. Never put `PRIVATE_KEY` in it: it is ignored.
+   - `REVIEW_SELECTION` makes the midterms the default scope; leave it out to review everything.
+   - Check that this file doesn't still point at a fork from an earlier rehearsal.
+3. **Open this folder in Claude Code** (a new session) and enable the `oo-dispute` server from `.mcp.json`. To check
+   it, ask: *"call `progress` on oo-dispute"*. The first call scans the chain and can take a few minutes.
+   - For Codex, see [AGENTS.md](AGENTS.md).
+   - `.mcp.json` passes `--only-polymarket`.
+4. **Start the review**, for example: *"Run the dispute-review prompt with three dispute-reviewer subagents in
+   parallel on scope midterms-2026."* The `dispute-reviewer` subagent only has the review tools and web search, with
+   no shell. Prefer a strong model for real decisions.
+5. **Send the disputes** from a terminal, with the same `CHAIN_ID`/RPC and your key. It shares the agents' queue,
+   `.oo-dispute/review-137.sqlite` in this repo, from whatever folder you run it:
+   ```bash
+   yarn apply --watch --scope selections/midterms-2026.resolved.json --dry-run
+   ```
+   - Passing the file (rather than the scope name) works even if `apply` starts before the agents. Drop `--dry-run`
+     to send. It asks before each batch, unless you pass `--auto --max-disputes N --max-bond X`.
+   - Stop it with Ctrl+C.
+   - If reviewers disagree with each other (a `conflict`), it's never sent automatically: `apply` reports it, and you
+     decide.
 
-### Environment Variables
+**Midterms:** `selections/midterms-2026.json` lists the 515 midterm events. The committed
+`selections/midterms-2026.resolved.json` is a snapshot with 4,552 markets in 512 events. Re-resolve it shortly before
+the election, while Polymarket's API is up:
+```bash
+yarn select resolve selections/midterms-2026.json
+```
+It lets the review filter and group a race's markets even if Polymarket's APIs are down. For other selections, see
+[docs/review-queue.md](docs/review-queue.md#scopes-selecting-markets).
 
-- `CHAIN_ID`: The chain ID. Required.
-- `NODE_URL_{CHAIN_ID}`: The node URL for the chain ID. Required unless `NODE_URLS_{CHAIN_ID}` is set.
-- `NODE_URLS_{CHAIN_ID}`: A JSON array of node URLs, tried in order when one fails, e.g. `NODE_URLS_137='["https://a","https://b"]'`. Recommended: configure several independent providers.
-- `NODE_RETRIES`, `NODE_RETRY_DELAY`, `NODE_TIMEOUT`: Retries per node (default 2), delay between retries in seconds (default 1), and request timeout in ms (default 60000).
-- `PRIVATE_KEY`: The private key for the disputer wallet. Required.
-- `DISPUTE_BATCHER_ADDRESS`: The `DisputeBatcher` deployed for the permissionless OOv2. Optional: without it, OOv2 disputes go one per transaction. At startup the CLI checks that a contract exists at this address and that it is bound to the configured OOv2.
-- `MAX_BLOCK_LOOK_BACK`: The maximum block range per log query (default 3499).
-- `BLOCK_LOOKBACK_PERIOD`: How many blocks back to look for proposals (default POLYGON_BLOCKS_PER_HOUR \* 24).
-- `MIN_PRIORITY_FEE_GWEI`: The minimum tip before the multiplier is applied. Defaults to 30 on Polygon, because nodes there reject the 1.5 gwei that ethers v5 assumes.
-- `GAS_PER_DISPUTE`: Gas budgeted per dispute in a batch (default 500000). Batch gas limits are not taken from `estimateGas`: the batcher catches each failed dispute, so the lowest gas limit that doesn't revert can silently skip the last disputes.
-- `RPC_CONCURRENCY`: Maximum RPC calls in flight when loading or re-checking proposals (default 10).
+## C. Rehearse on a fork
 
-### Example Usage
-
-To dispute Polymarket proposals on Polygon Mainnet (chain ID 137) using two RPC providers and the batcher:
+Back up your `.oo-dispute/mcp.env` first: `fork:up` replaces it and `fork:down` deletes it.
 
 ```bash
-CHAIN_ID=137 NODE_URLS_137='["<RPC_1>","<RPC_2>"]' PRIVATE_KEY=<YOUR_PRIVATE_KEY> DISPUTE_BATCHER_ADDRESS=<BATCHER> yarn dispute -p
+FORK_URL=<polygon archive rpc> yarn fork:up
 ```
 
-To rehearse first without sending anything, add `--dry-run`.
+This starts a local fork with 11 test proposals about past events, 5 of them wrong. Then:
+1. Review them with path B in a new Claude Code session.
+2. Send the disputes with `source .oo-dispute/fork/apply.env && yarn apply --watch`. The key in that file is anvil's
+   public test key and only works on the fork.
+3. Check the result on chain with `yarn fork:status`.
+4. Clean up with `yarn fork:down`.
 
-## Reviewing with Claude Code or Codex (MCP)
+To stress-test the queue with thousands of simultaneous proposals, without spending model tokens, use
+`yarn fork:load`. See [docs/fork-testing.md](docs/fork-testing.md).
 
-When there are too many proposals to review by hand, agents can review them in parallel while a human sends the
-disputes. Nothing is hosted: the agent starts the MCP server as a local process.
+## Pre-election checklist
 
-- **`yarn mcp`** (`dist/mcp-entry.js`): a local stdio MCP server. It scans the chain, keeps a shared review queue in
-  `.oo-dispute/review-<chain>.sqlite`, and gives agents read-only tools. It never sees `PRIVATE_KEY`.
-- **`yarn apply --watch`**: run by a human, with the key. It picks up the disputes that reviews call for, re-checks
-  them on chain, asks for confirmation, and sends them in batches.
+- [ ] Two working Polygon RPCs in `NODE_URLS_137`, both allowing `eth_getLogs` ranges (or a lower `MAX_BLOCK_LOOK_BACK`).
+- [ ] A dedicated wallet funded with USDC.e for bonds and POL for gas, with approvals done.
+- [ ] `yarn select resolve selections/midterms-2026.json` re-run in the last day.
+- [ ] A rehearsal done (`yarn fork:up` … `yarn fork:down`), and `.oo-dispute/mcp.env` points at mainnet again.
+- [ ] Claude Code / Codex sees the `oo-dispute` server, and `progress` answers.
+- [ ] `yarn apply --dry-run --scope selections/midterms-2026.resolved.json` runs.
 
-Setup:
+## Troubleshooting
 
-1. `yarn install --frozen-lockfile && yarn build` (Node 22.13 or later).
-2. Export `CHAIN_ID=137` and `NODE_URLS_137='["<rpc1>","<rpc2>"]'` (or `NODE_URL_137`).
-3. Open this folder in Claude Code and enable the `oo-dispute` server from `.mcp.json`. For Codex, see `AGENTS.md`.
-4. Ask the agent to run the `dispute-review` prompt, or: "Review the open proposals with three dispute-reviewer
-   subagents in parallel." The `dispute-reviewer` subagent (`.claude/agents/`) only has the review tools and web
-   search, with no shell.
-5. In another terminal: `PRIVATE_KEY=<key> yarn apply --watch` (add `--dry-run` to rehearse).
+| Symptom | Fix |
+|---|---|
+| `secp256k1 unavailable, reverting to browser version` | Harmless. |
+| `CHAIN_ID is not set` / `No RPC configured` | Export the variables, put them in `.env` (CLI), or in `.oo-dispute/mcp.env` (agents). |
+| `exceed maximum block range`, `ranges over 10000 blocks…` | The RPC limits `eth_getLogs`: set `MAX_BLOCK_LOOK_BACK=1000` (or lower), or use another provider. |
+| `oo-dispute` server missing or "failed to start" in Claude Code | Run `yarn build`, open a new session in this folder, and check `.oo-dispute/mcp.env`. If the desktop app can't find `node` (nvm, mise…), put the absolute path to `node` in your local `.mcp.json`. |
+| The agents see fork proposals during a real incident | A leftover `.oo-dispute/mcp.env` from a rehearsal: run `yarn fork:down` and recreate it. |
+| `apply` finds no candidates | Use the same `CHAIN_ID`/RPC and `--scope` as the agents, and don't point `--db`/`REVIEW_DB` elsewhere. |
+| `Another apply is already running` | Only one `apply` per database. Ctrl+C releases it at once; after a `kill -9`, wait 2 minutes. |
+| A proposal shows as `conflict` | Reviewers disagree: it's never sent automatically. Decide by hand (`yarn dispute`), or ask a reviewer to re-check. |
+| Polymarket V2 proposals are not reviewed | V2 (OOReporter, JSON ancillary data) isn't supported yet, and `--only-polymarket` excludes it. |
+| `Approve unlimited?` prompt | The bond token isn't approved for the contract that pulls the bond. Answer `y`, or approve ahead of time. |
 
-How the queue works:
+## Reference
 
-- **One review per event.** Markets that share a neg-risk group (from Polymarket's public API) or an identical
-  description are grouped, so one review answers all of them. Agents can merge groups with `regroup`.
-- **Claims with leases.** `next_batch` hands each group to one agent for 10 minutes (`--lease-minutes`), most urgent
-  first. Work from an agent that stops comes back to the queue.
-- **New proposals keep arriving.** The queue re-scans the chain at most every 15 s (`SCAN_INTERVAL_SECONDS`).
-- **`unclear` comes back.** It is re-checked after a third of the remaining liveness (5–30 min), and again close to
-  expiry.
-- **Code decides, not the model.** A proposal becomes a dispute candidate only when the latest verdict disagrees with
-  the proposed price at confidence ≥ `--min-confidence` (default 0.8), from at least `--confirmations` distinct
-  reviewers (default 1). Submissions are rejected if the price the agent saw is stale or if more than one market in a
-  mutually exclusive group would resolve Yes.
-- **Cheap flags first.** Each proposal comes with deterministic flags: several Yes proposals in an exclusive group,
-  market price against the proposal, a too-early or 50-50 proposal, a price outside `res_data`, a rare proposer,
-  creator updates present, and less than 30 minutes left.
-- **Self-contained.** Context comes from the chain (ancillary data, creator updates from the bulletin board). The
-  Polymarket CLOB price is added when its public API answers, and is marked unavailable when it doesn't.
+### Commands
 
-### Selecting markets (scopes)
+| Command | Purpose |
+|---|---|
+| `yarn dispute [options]` | Interactive terminal review and dispute (path A) |
+| `yarn apply [options]` | Send the disputes the agent reviews call for (path B) |
+| `yarn mcp [options]` | The MCP review server; agents normally start it from `.mcp.json` |
+| `yarn select resolve <file> [-o out]` | Resolve a selection's slugs/tags to ids through Gamma |
+| `yarn fork:up` / `fork:status` / `fork:down` | Local rehearsal fork |
+| `yarn fork:load` | Load test on a fork |
+| `yarn test` | Unit tests (no network) |
 
-To review only some markets, for example the midterms, define a **scope**. A scope is a named selection stored in
-the shared queue, so several agents and `apply` can use it by name, and different teams can work on different
-scopes at the same time.
+**Shared by `dispute` and `apply`:**
 
-A selection file looks like this (see `selections/midterms.example.json`):
+| Option | Default | |
+|---|---|---|
+| `-p, --only-polymarket` | off | Only Polymarket requesters (excludes V2 for now) |
+| `-o, --oracle <all\|oov2\|managed>` | all | Which oracles to scan (`managed` is Polygon only) |
+| `-m, --multiplier <n>` | 4 | Multiplier on the priority fee (decimals allowed) |
+| `--no-batch` | | One dispute per transaction |
+| `--batch-size <n>` | 20 | Disputes per batch transaction |
+| `-d, --dry-run` | off | Simulate; approve and send nothing |
 
-```json
-{
-  "name": "midterms",
-  "include": {
-    "event_slugs": ["which-party-will-win-the-senate-in-2026"],
-    "tags": ["midterms"],
-    "market_ids": ["6301315"],
-    "title_regex": "\\b(Senate|House|Governor)\\b"
-  },
-  "exclude": { "title_regex": "primary" },
-  "protocol": ["polymarket_v1"],
-  "oracle": ["managed", "oov2"]
-}
-```
+**`dispute` only:**
 
-A proposal is in the scope when all of these hold:
-- it matches **any** `include` criterion (or `include` is empty);
-- it passes `protocol` (`polymarket_v1`, `polymarket_v2` or `other`, judged by requester) and `oracle`;
-- it matches no `exclude` criterion.
+| Option | Default | |
+|---|---|---|
+| `-t` / `-b` / `-r` / `-a` | `-t` | Sort by time left / bond / random / event order |
+| `--flush-before <min>` | 10 | Send the queue when a queued proposal expires within this many minutes |
 
-Matching only uses data from the chain: the `market_id` in the ancillary data, the UMA question id, the CTF
-condition id, the title, the requester and the oracle. It therefore keeps working when Polymarket's APIs are down.
-Market slugs, event slugs and Gamma tags are converted to ids through Gamma:
+**`apply` only:**
 
-- **Before the incident**, run `yarn select resolve selections/midterms.json`. It writes
-  `midterms.resolved.json` with the ids, and lists under `unresolved` anything Gamma could not answer.
-  - Gamma refuses page offsets past about 2,000 events, so broad tags such as `sports` come back truncated, with a
-    warning. Use narrow tags (`midterms`, about 1,300 events) or event slugs.
-  - If none of the `include` criteria resolve, the selection matches **nothing**, never everything.
-- **When reviewing**, load the scope in one of these ways:
-  - `node dist/mcp-entry.js --select midterms.resolved.json`, or `REVIEW_SELECTION=<file>` in
-    `.oo-dispute/mcp.env`. A selection loaded at start-up becomes the default scope.
-  - Ask the agent to create one with the `define_scope` tool ("review only the Senate markets").
-  - Check them with `list_scopes`. `next_batch`, `progress`, `list_queue`, `at_risk` and `dispute_candidates` take
-    `scope`; `"all"` means every proposal.
-- **When sending**, run `yarn apply --watch --scope midterms` (a scope name or a selection file).
+| Option | Default | |
+|---|---|---|
+| `-w, --watch` | off | Keep running and send new candidates |
+| `--interval <s>` | 20 | Polling interval in watch mode |
+| `--scope <name\|file>` | all | Only this scope's disputes |
+| `--auto --max-disputes <n> --max-bond <x>` | | Send without asking, within these limits (bond in token units) |
+| `--db <path>` | `.oo-dispute/review-<chain>.sqlite` in the repo | Review database |
+| `--min-confidence <n>` / `--confirmations <n>` | 0.8 / 1 | Dispute policy (stored in the database, shared with the MCP server) |
 
-Resolving also records **which Polymarket event each market belongs to** (`market_events` / `events` in the
-resolved file), keyed exactly like the live grouping. When a proposal arrives and Polymarket's APIs don't answer, the
-queue still groups a race's markets together from that map and marks neg-risk events as mutually exclusive, so one
-review covers the whole race and the "more than one Yes" check still applies. With `midterms-2026` that is 4,552
-markets in 512 events.
+**MCP server** (`dist/mcp-entry.js`):
 
-Scopes filter only what is handed out and listed. The queue still records every proposal, so switching scopes
-doesn't need a new chain scan. Polymarket V2 proposals (JSON ancillary data) are not parsed yet, so `title_regex`
-and `market_ids` don't match them; `protocol: ["polymarket_v2"]` does. V2 is also excluded by `--only-polymarket`.
+| Option | Default | |
+|---|---|---|
+| `-o, --oracle` / `-p, --only-polymarket` | all / off | As above (`.mcp.json` passes `-p`) |
+| `--select <files…>` | | Selection files to load as scopes; the first becomes the default scope |
+| `--scope <name>` | | Default scope for tool calls |
+| `--db`, `--min-confidence`, `--confirmations` | | As for `apply` |
+| `--lease-minutes <n>` | 10 | How long a claimed group stays reserved |
+| `--no-market-data` | | Don't query Polymarket's public API |
 
-`apply` options: `--watch`, `--interval <s>`, `--dry-run`, `--scope <name|file>`, and `--auto --max-disputes <n> --max-bond <amount>` to
-send without asking within those limits. Only one `apply` can run per review database.
+### Environment variables
 
-## Fork rehearsal
+| Variable | Used by | Default / notes |
+|---|---|---|
+| `CHAIN_ID` | all | Required. 137 for Polygon |
+| `NODE_URLS_137` / `NODE_URL_137` | all | Required. A JSON array of RPCs tried in order (wins), or a single URL |
+| `NODE_RETRIES`, `NODE_RETRY_DELAY`, `NODE_TIMEOUT` | all | 2 retries, 1 s, 60000 ms |
+| `PRIVATE_KEY` | `dispute`, `apply` | Required there; never read by the MCP server |
+| `DISPUTE_BATCHER_ADDRESS` | `dispute`, `apply` | Empty: OOv2 disputes go one per transaction |
+| `BLOCK_LOOKBACK_PERIOD` | all | 43200 (~24 h) blocks scanned on a fresh start |
+| `START_BLOCK` | MCP, `apply` | First block a fresh review queue scans (overrides the lookback) |
+| `MAX_BLOCK_LOOK_BACK` | all | 3499 blocks per `eth_getLogs` call |
+| `MIN_PRIORITY_FEE_GWEI` | sending | 30 on Polygon (ethers v5 assumes 1.5) |
+| `GAS_PER_DISPUTE` | sending | 500000 gas budgeted per dispute in a batch |
+| `RPC_CONCURRENCY` | all | 10 calls in flight |
+| `REVIEW_DB` | MCP, `apply` | `.oo-dispute/review-<chain>.sqlite` in the repo |
+| `REVIEW_SELECTION` | MCP | Comma-separated selection files loaded at start-up |
+| `SCAN_INTERVAL_SECONDS` | MCP, `apply` | 15 |
+| `OO_DISPUTE_ENV_FILE` | MCP | `.oo-dispute/mcp.env` in the repo; settings file read at start-up (it wins over the environment) |
+| `OOV2_ADDRESS` / `MANAGED_OOV2_ADDRESS` | all | Override the oracle addresses (testnets, forks) |
+| `POLYMARKET_CLOB_URL` / `POLYMARKET_GAMMA_URL` | MCP, `select` | Polymarket's public APIs |
 
-The quickest way to try everything locally:
+## Further reading
 
-```bash
-yarn fork:up      # anvil Polygon fork, 11 Polymarket-style test proposals (5 wrong), DisputeBatcher, config files
-yarn fork:status  # who disputed what so far
-yarn fork:down    # stop the fork and remove its config
-```
-
-`fork:up` writes `.oo-dispute/mcp.env`, so the `oo-dispute` MCP server in `.mcp.json` points at the fork, and
-`.oo-dispute/fork/apply.env` for `source .oo-dispute/fork/apply.env && yarn apply --watch`. It needs Foundry's
-`anvil`; set `FORK_URL` for a different Polygon archive RPC and `FORK_PORT` if 8555 is taken.
-
-The MCP server reads `.oo-dispute/mcp.env` (or `OO_DISPUTE_ENV_FILE`) at startup, which also helps on a real
-incident when agents are launched from a desktop app without your shell variables. It never loads `PRIVATE_KEY`.
-`START_BLOCK` sets where a fresh review queue starts scanning.
-
-### Load test (many simultaneous proposals, no LLM)
-
-```bash
-FORK_URL=<polygon archive rpc> yarn fork:load
-```
-
-The load test puts the review queue, the MCP server and `apply` under the kind of burst expected on election
-night, without spending model tokens:
-
-- **Proposals:** it builds Polymarket-format proposals from real midterm markets (`selections/midterms-2026.json`,
-  via Gamma). By default it sends 1000 in waves over 10 minutes, with a 20-minute liveness so expiry pressure is
-  real, and 10% of the answers wrong.
-- **Fork contracts:** it deploys a fresh OptimisticOracleV2 on the fork against UMA's real Finder and registers it,
-  so disputes escalate to the real oracle while the oracle's storage stays local and fast. The CLI is pointed at it
-  with `OOV2_ADDRESS`.
-- **Reviewers:** it runs scripted reviewers in parallel (`REVIEWERS`, default 10). Each runs its own `oo-dispute` MCP
-  server and loops `next_batch` → simulated thinking time → `submit_review`, taking verdicts from the answer key.
-  Some first looks answer `unclear`, to exercise re-checks.
-- **Disputes:** it runs `apply --watch --auto` alongside, and at the end reports on chain how many wrong proposals
-  were disputed in time, missed, or wrongly disputed, plus dispute delay and margin before expiry.
-
-Tune it with `COUNT`, `MINUTES`, `WAVES`, `LIVENESS`, `WRONG_RATE`, `REVIEWERS`, `THINK_MS` (for example `2000-8000`)
-and `UNCLEAR_RATE`. Output goes to `.oo-dispute/load-<timestamp>/`: `report.json`, `reviewers.json`,
-`progress.jsonl` and the logs. It runs its own anvil on port 8556 and never touches `.oo-dispute/mcp.env`.
-
-The building blocks:
-
-`scripts/fork-rehearsal.js` creates test proposals on a local Polygon fork, so you can run the whole flow end to end without touching mainnet. It uses anvil's well-known test accounts and refuses to run unless the RPC it is given has the real Polygon contracts.
-
-```bash
-anvil --fork-url <polygon archive rpc> --port 8555 --block-time 1
-FORK_RPC=http://127.0.0.1:8555 node scripts/fork-rehearsal.js setup state.json 12 <DisputeBatcher.json artifact or -> oov2
-# Run the CLI with the env the script prints, then:
-FORK_RPC=http://127.0.0.1:8555 node scripts/fork-rehearsal.js check state.json
-```
-
-`scenario` mode instead creates Polymarket-style markets about past events (elections, sports, the Fed), some with
-wrong proposals and one with a prompt injection in its description, to rehearse agent review end to end:
-`FORK_RPC=http://127.0.0.1:8555 node scripts/fork-rehearsal.js scenario state.json`.
-
-The `DisputeBatcher` artifact comes from building `oracle/contracts` in `UMAprotocol/mcp-otb` with Foundry. Pass `managed` instead of `oov2` to create proposals on the Managed OOv2. If your fork RPC rejects historical log ranges, set `BLOCK_LOOKBACK_PERIOD` to the number of blocks mined on the fork and `MAX_BLOCK_LOOK_BACK=1`.
+- [docs/review-queue.md](docs/review-queue.md): how the agent queue works, the dispute policy, scopes, MCP tools and
+  the security model.
+- [docs/fork-testing.md](docs/fork-testing.md): the rehearsal fork, the load test and its results, and the scripts
+  behind them.
+- [AGENTS.md](AGENTS.md): instructions for agents and the Codex setup.
