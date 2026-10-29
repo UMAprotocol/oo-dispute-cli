@@ -6,8 +6,8 @@ Polygon) when the usual services are down. Agents **review** proposals. Humans *
 
 ## Reviewing proposals
 
-The `oo-dispute` MCP server (`.mcp.json`; run `yarn build` first) keeps a shared review queue on disk. Several agents
-can work on it at once. Its settings come from `.oo-dispute/mcp.env` in this repo.
+The `oo-dispute` MCP server keeps a shared review queue on disk. Several agents can work on it at once. Its settings
+come from `.oo-dispute/mcp.env` in this repo; see [Setup](#setup-claude-code-and-codex) if its tools are missing.
 
 1. Call `review_policy` and follow it. Call `progress` to see the queue. The first call scans the chain and may take
    minutes.
@@ -34,16 +34,13 @@ Those aren't supported yet.
   or `PRIVATE_KEY`. A human runs `yarn apply --watch` in their own terminal. The MCP server never holds the key.
 - The dispute decision is made in code from your verdict and confidence. Be calibrated; `unclear` is always safe.
 
-## Codex setup
+## Setup (Claude Code and Codex)
 
-Add to `~/.codex/config.toml`, with the absolute path to this repo. The settings (`CHAIN_ID`, `NODE_URLS_137`,
-`REVIEW_SELECTION`) are read from `.oo-dispute/mcp.env` in the repo, so they don't need repeating here:
-
-```toml
-[mcp_servers.oo-dispute]
-command = "node"
-args = ["/path/to/oo-dispute-cli/dist/mcp-entry.js", "--only-polymarket"]
-```
+If the `oo-dispute` tools aren't available, don't start the server yourself. Ask the user to run, or run with their
+OK, `yarn agents:setup` in this repo (add `--rpc <url>` if `.oo-dispute/mcp.env` doesn't exist yet). It builds and
+registers the server for Claude Code (local scope) and Codex (`~/.codex/config.toml`) with absolute paths. The user
+then has to start a new session: servers are loaded at session start. The settings (`CHAIN_ID`, `NODE_URLS_137`,
+`REVIEW_SELECTION`) come from `.oo-dispute/mcp.env`.
 
 Codex has no `dispute-reviewer` subagent. To review in parallel, run several Codex sessions, each with its own agent
 name; they share the same queue.
