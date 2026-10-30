@@ -32,6 +32,9 @@ proposal in the scope (default: the server's) until the queue is empty or the us
    the full guide.
 5. Proposals whose reviews call for a dispute show up in `dispute_candidates`. A `conflict` (reviewers disagree)
    is never sent automatically: report it to the user.
+6. If the user already has a list of question ids to dispute and wants to skip the review, tell them to run
+   `yarn dispute --question-ids <file> --dry-run` themselves, then without `--dry-run` (README, path A). You never
+   run it.
 
 `.mcp.json` passes `--only-polymarket`, which today also excludes Polymarket V2 proposals (OOReporter requester).
 Those aren't supported yet.

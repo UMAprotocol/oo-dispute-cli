@@ -1,10 +1,14 @@
+import { readFileSync, writeFileSync } from 'fs';
 import * as readline from 'readline';
 import { initConfig } from './config';
 import { DISPUTE_CONFIRMATION_PROMPT } from './constants';
 import { withRetry } from './concurrency';
 import { describeProposal, DisputeEngine, DisputeOutcome, DisputeStatus } from './dispute';
 import { displayProposalInfo, isYesAnswer } from './display';
+import { parseAncillary } from './polymarket';
+import { userPath } from './paths';
 import { disputableAfterLiveness, fetchProposals, Proposal } from './proposals';
+import { bondTotals, matchQuestionIds, parseQuestionIds, withinCaps } from './question-ids';
 
 export interface Options {
     multiplier: string;
@@ -19,6 +23,10 @@ export interface Options {
     batchSize?: string;
     flushBefore?: string;
     dryRun: boolean;
+    questionIds?: string;
+    yes?: boolean;
+    maxDisputes?: string;
+    maxBond?: string;
 }
 
 export async function handleCLI(options: Options) {
@@ -26,7 +34,22 @@ export async function handleCLI(options: Options) {
         input: process.stdin,
         output: process.stdout
     });
-    const ask = (question: string) => new Promise<string>((resolve) => rl.question(question, resolve));
+    // Once stdin ends (piped input, a script), every further question is answered with "" (no) instead of throwing.
+    let closed = false;
+    let pending: ((answer: string) => void) | undefined;
+    rl.on('close', () => {
+        closed = true;
+        pending?.('');
+    });
+    const ask = (question: string) =>
+        new Promise<string>((resolve) => {
+            if (closed) return resolve('');
+            pending = resolve;
+            rl.question(question, (answer) => {
+                pending = undefined;
+                resolve(answer);
+            });
+        });
 
     try {
         await run(options, ask);
@@ -43,10 +66,13 @@ async function run(options: Options, ask: (question: string) => Promise<string>)
     if (config.dryRun) console.log('🧪 DRY RUN: disputes are simulated, nothing is approved or sent.');
     console.log(`👛 Disputer ${config.wallet.address} on chain ${config.chainId}; batch size ${config.batchSize}.`);
 
-    const engine = new DisputeEngine(config, async (question) => isYesAnswer(await ask(question)));
+    // --yes also answers the bond-token approval prompt.
+    const engine = new DisputeEngine(config, async (question) => options.yes || isYesAnswer(await ask(question)));
     await engine.init();
 
     const proposals = await fetchProposals(config);
+    if (options.questionIds) return disputeQuestionIds(options, engine, proposals, ask);
+
     console.log(`📋 ${proposals.length} open proposal(s), sorted by ${config.sort}.`);
 
     // Approved proposals are queued and sent in batches: when the queue is full, when a queued proposal is close to
@@ -90,6 +116,42 @@ async function run(options: Options, ask: (question: string) => Promise<string>)
 
     await flush();
     printSummary(outcomes);
+}
+
+// Disputes a known list of question ids without the review queue: no per-proposal prompt, one confirmation for the
+// whole list (or none with --yes, which requires caps). Each proposal is still re-checked on chain before sending.
+async function disputeQuestionIds(options: Options, engine: DisputeEngine, proposals: Proposal[], ask: (question: string) => Promise<string>) {
+    const file = userPath(options.questionIds!);
+    const ids = parseQuestionIds(readFileSync(file, 'utf8'));
+    const { matched, missing, repeated } = matchQuestionIds(proposals, ids);
+    console.log(`🎯 ${ids.length} question id(s) in ${options.questionIds}: ${matched.length} open proposal(s) match.`);
+    if (missing.length > 0) {
+        writeFileSync(`${file}.missing.txt`, missing.join('\n') + '\n');
+        console.warn(
+            `⚠️  ${missing.length} id(s) have no open proposal in the scanned range (already settled or disputed, not proposed yet, or older than BLOCK_LOOKBACK_PERIOD): listed in ${options.questionIds}.missing.txt`
+        );
+    }
+    if (repeated.length > 0) console.warn(`⚠️  ${repeated.length} id(s) have more than one open request (the same question asked again); all of them are disputed.`);
+    if (options.yes && (!options.maxDisputes || !options.maxBond)) throw new Error('--yes requires --max-disputes and --max-bond');
+
+    const selected = withinCaps(matched, options.maxDisputes ? Number(options.maxDisputes) : Infinity, options.maxBond ? Number(options.maxBond) : Infinity);
+    if (selected.length < matched.length) console.warn(`⚠️  Caps reached: ${matched.length - selected.length} matching proposal(s) left out of this run.`);
+    if (selected.length === 0) {
+        console.log('🔚 Nothing to dispute.');
+        return;
+    }
+
+    const byOracle = new Map<string, number>();
+    for (const proposal of selected) byOracle.set(proposal.oracleKind, (byOracle.get(proposal.oracleKind) ?? 0) + 1);
+    console.log(`\n⚖️  ${selected.length} dispute(s) (${[...byOracle].map(([kind, count]) => `${kind}: ${count}`).join(', ')}), total bond ${bondTotals(selected)}:`);
+    for (const proposal of selected.slice(0, 10)) console.log(`   • ${parseAncillary(proposal.ancillaryData).title ?? describeProposal(proposal)} (${describeProposal(proposal)})`);
+    if (selected.length > 10) console.log(`   … and ${selected.length - 10} more`);
+
+    if (!options.yes && !isYesAnswer((await ask(`👉 Dispute these ${selected.length} proposal(s)? (y/n) `)).trim())) {
+        console.log('❌ Nothing sent.');
+        return;
+    }
+    printSummary(await engine.dispute(selected));
 }
 
 function printSummary(outcomes: DisputeOutcome[]) {
