@@ -92,6 +92,10 @@ It never touches `.oo-dispute/mcp.env`.
 - **Time:** 7.2 min end to end, including the scan of the 3,000 open proposals.
 - **Memory:** 0.5 GB peak RSS.
 
+A second run used 600 proposals and an id file mixing 255 UMA question ids with 35 Polymarket neg-risk `questionID`s
+from Gamma. All 290 were disputed, the 35 matched through the on-chain NegRiskOperator lookup, and 0 correct proposals
+were touched. It took 15 transactions and 90 s.
+
 The queue isn't the bottleneck: `next_batch` takes ~0.2 s and `submit_review` a few ms. With real LLM reviewers,
 capacity depends on how many run in parallel and how long each review takes. Grouping by event means about 515
 reviews for all the midterms.

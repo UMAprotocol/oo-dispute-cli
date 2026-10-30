@@ -29,13 +29,31 @@ test("question ids parse from text, JSON arrays and selection files", () => {
     assert.throws(() => parseQuestionIds("0x1234"), /Not question ids/);
 });
 
-test("matching keeps proposal order, lists missing ids and repeated requests", () => {
+test("matching keeps proposal order, lists missing ids and repeated requests", async () => {
     const again = proposal("A", 750, 2); // the same question asked again
     const missing = "0x" + "11".repeat(32);
-    const result = matchQuestionIds([b, a, c, again], [idA, idB, missing]);
+    const result = await matchQuestionIds([b, a, c, again], [idA, idB, missing]);
     assert.deepEqual(result.matched, [b, a, again]);
     assert.deepEqual(result.missing, [missing]);
     assert.deepEqual(result.repeated, [idA]);
+});
+
+test("ids that aren't UMA question ids are matched as Polymarket ones, only when needed", async () => {
+    const negRiskIdOfC = "0x" + "c0".repeat(31) + "00";
+    let lookups = 0;
+    const polymarketId = async (p: Proposal) => {
+        lookups++;
+        return p === c ? negRiskIdOfC : undefined;
+    };
+    const result = await matchQuestionIds([a, b, c], [idA, negRiskIdOfC], polymarketId);
+    assert.deepEqual(result.matched, [a, c]);
+    assert.equal(result.viaPolymarket, 1);
+    assert.deepEqual(result.missing, []);
+    assert.equal(lookups, 2, "only proposals not already matched by UMA id are looked up");
+
+    lookups = 0;
+    await matchQuestionIds([a, b, c], [idA, idB], polymarketId);
+    assert.equal(lookups, 0, "no lookups when every id matched as a UMA id");
 });
 
 test("caps limit count and total bond; totals are per token", () => {

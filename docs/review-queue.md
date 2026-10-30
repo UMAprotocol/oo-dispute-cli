@@ -107,6 +107,11 @@ A proposal is in the scope when all of these hold:
 Matching uses chain data only: the `market_id` in the ancillary data, the UMA question id (`keccak(ancillary)`), the
 CTF condition id, the title, the requester and the oracle.
 
+For neg-risk markets (every midterm race), Polymarket's `questionID` and `conditionId` are not UMA's. Their UMA
+question id is Gamma's `negRiskRequestID`, which `select resolve` stores in `question_ids`. In a scope, list neg-risk
+markets by `market_ids` or UMA question ids; their Polymarket condition ids don't match. `yarn dispute --question-ids`
+accepts both kinds of question id.
+
 **Resolution.** `yarn select resolve <file>`, or `define_scope`, turns `slugs`, `event_slugs` and `tags` into ids
 through Polymarket's Gamma API:
 - It also records which event each market belongs to (`market_events` / `events`), so grouping works offline.
@@ -134,7 +139,7 @@ them.
 | `release_claim` | Give a group back, or all of an agent's groups when called without `group_key` |
 | `get_proposal` | Full detail for one proposal, including previous reviews |
 | `list_queue` / `at_risk` | Open proposals by expiry / unresolved ones close to expiry |
-| `dispute_candidates` | Proposals whose reviews call for a dispute, not yet sent, with the ids to check them: Polymarket market id and event page, UMA question id, CTF condition id, request fields, proposer, bond and a Polygonscan link to the proposal |
+| `dispute_candidates` | Proposals whose reviews call for a dispute, not yet sent, with the ids to check them: Polymarket market id and event page, UMA question id, Polymarket question id and condition id (resolved on chain, so correct for neg-risk markets), request fields, proposer, bond and a Polygonscan link to the proposal |
 | `define_scope` / `list_scopes` | Create or list scopes |
 | `regroup` | Put proposals about one event in one group |
 

@@ -16,6 +16,7 @@ import {
     VERDICTS,
     verdictPrice,
 } from "../polymarket";
+import { PolymarketIdResolver } from "../polymarket-ids";
 import { disputableAfterLiveness, Proposal, proposalId, scanOracleRange } from "../proposals";
 import { evaluate, Evaluation, needsReview, recheckTime, ReviewPolicy } from "./policy";
 import { compileSelection, describeSelection, EventGroup, needsResolution, parseSelection, resolveSelection, Selection } from "./selection";
@@ -128,7 +129,11 @@ export class ReviewQueue {
     private scopeCache = new Map<string, { raw: string; match: Match }>();
     private eventIndex?: { signature: string; byMarket: Map<string, EventGroup> };
 
-    constructor(private config: Config, readonly store: ReviewStore, private options: QueueOptions, private owner = `pid-${process.pid}`) {}
+    private polymarketIds: PolymarketIdResolver;
+
+    constructor(private config: Config, readonly store: ReviewStore, private options: QueueOptions, private owner = `pid-${process.pid}`) {
+        this.polymarketIds = new PolymarketIdResolver(config.provider);
+    }
 
     // Incremental chain scan, shared by all processes: one scanner at a time, at most every scanIntervalSeconds.
     async refresh(force = false): Promise<{ scanned: boolean; added: number }> {
@@ -169,7 +174,9 @@ export class ReviewQueue {
         if (!this.options.fetchMarketData || this.marketFailures >= 3) {
             return { status: "unavailable", fetchedAt: now(), error: this.options.fetchMarketData ? "skipped after repeated failures" : "disabled" };
         }
-        const market = await fetchMarketData(conditionId(proposal.requester, questionId(proposal.ancillaryData)));
+        // Neg-risk markets are traded under the NegRiskAdapter's condition, not the UMA adapter's.
+        const ids = await this.polymarketIds.resolve(proposal.requester, proposal.ancillaryData).catch(() => undefined);
+        const market = await fetchMarketData(ids?.condition_id ?? conditionId(proposal.requester, questionId(proposal.ancillaryData)));
         // A 4xx means the API is up but doesn't know this market (not every requester is a Polymarket adapter).
         if (market.status === "unavailable" && !market.error?.startsWith("HTTP 4")) this.marketFailures++;
         else this.marketFailures = 0;
@@ -555,16 +562,19 @@ export class ReviewQueue {
     }
 
     // Ids and links a human needs to check a candidate before sending a dispute: the UMA request, the Polymarket market
-    // and the proposal transaction.
-    identifiers(sp: StoredProposal) {
+    // and the proposal transaction. Polymarket's question and condition ids are resolved on chain (they differ from
+    // UMA's for neg-risk markets); if that lookup fails they are left out rather than guessed.
+    async identifiers(sp: StoredProposal) {
         const { proposal, context } = sp;
-        const question = questionId(proposal.ancillaryData);
         const explorer = EXPLORERS[this.config.chainId];
         const eventSlug = context.market.eventSlug;
+        const polymarket = await this.polymarketIds.resolve(proposal.requester, proposal.ancillaryData).catch(() => undefined);
         return {
             market_id: context.parsed.marketId ?? null,
-            question_id: question,
-            condition_id: conditionId(proposal.requester, question),
+            question_id: questionId(proposal.ancillaryData),
+            polymarket_question_id: polymarket?.polymarket_question_id,
+            condition_id: polymarket?.condition_id,
+            neg_risk: polymarket?.neg_risk,
             requester: proposal.requester,
             request_timestamp: proposal.timestamp.toString(),
             identifier: ethers.utils.parseBytes32String(proposal.identifier),

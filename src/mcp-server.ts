@@ -212,11 +212,13 @@ export async function startMcpServer(argv: string[]) {
         },
         ({ scope }) =>
             respond(() =>
-                queue.candidates(scopeOf(scope)).map(({ stored, evaluation }) => ({
-                    ...queue.summary(stored, evaluation, Math.floor(Date.now() / 1000)),
-                    confirming_agents: evaluation.confirmingAgents,
-                    ...queue.identifiers(stored),
-                }))
+                Promise.all(
+                    queue.candidates(scopeOf(scope)).map(async ({ stored, evaluation }) => ({
+                        ...queue.summary(stored, evaluation, Math.floor(Date.now() / 1000)),
+                        confirming_agents: evaluation.confirmingAgents,
+                        ...(await queue.identifiers(stored)),
+                    }))
+                )
             )
     );
 

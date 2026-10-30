@@ -1,11 +1,12 @@
 import { readFileSync, writeFileSync } from 'fs';
 import * as readline from 'readline';
-import { initConfig } from './config';
+import { Config, initConfig } from './config';
 import { DISPUTE_CONFIRMATION_PROMPT } from './constants';
 import { withRetry } from './concurrency';
 import { describeProposal, DisputeEngine, DisputeOutcome, DisputeStatus } from './dispute';
 import { displayProposalInfo, isYesAnswer } from './display';
 import { parseAncillary } from './polymarket';
+import { PolymarketIdResolver } from './polymarket-ids';
 import { userPath } from './paths';
 import { disputableAfterLiveness, fetchProposals, Proposal } from './proposals';
 import { bondTotals, matchQuestionIds, parseQuestionIds, withinCaps } from './question-ids';
@@ -71,7 +72,7 @@ async function run(options: Options, ask: (question: string) => Promise<string>)
     await engine.init();
 
     const proposals = await fetchProposals(config);
-    if (options.questionIds) return disputeQuestionIds(options, engine, proposals, ask);
+    if (options.questionIds) return disputeQuestionIds(options, config, engine, proposals, ask);
 
     console.log(`📋 ${proposals.length} open proposal(s), sorted by ${config.sort}.`);
 
@@ -120,11 +121,16 @@ async function run(options: Options, ask: (question: string) => Promise<string>)
 
 // Disputes a known list of question ids without the review queue: no per-proposal prompt, one confirmation for the
 // whole list (or none with --yes, which requires caps). Each proposal is still re-checked on chain before sending.
-async function disputeQuestionIds(options: Options, engine: DisputeEngine, proposals: Proposal[], ask: (question: string) => Promise<string>) {
+async function disputeQuestionIds(options: Options, config: Config, engine: DisputeEngine, proposals: Proposal[], ask: (question: string) => Promise<string>) {
     const file = userPath(options.questionIds!);
     const ids = parseQuestionIds(readFileSync(file, 'utf8'));
-    const { matched, missing, repeated } = matchQuestionIds(proposals, ids);
-    console.log(`🎯 ${ids.length} question id(s) in ${options.questionIds}: ${matched.length} open proposal(s) match.`);
+    // Ids that aren't UMA question ids are looked up as Polymarket ones (neg-risk markets), on chain.
+    const resolver = new PolymarketIdResolver(config.provider);
+    const { matched, missing, repeated, viaPolymarket } = await matchQuestionIds(proposals, ids, async (proposal) => {
+        const resolved = await resolver.resolve(proposal.requester, proposal.ancillaryData);
+        return resolved.neg_risk ? resolved.polymarket_question_id : undefined;
+    });
+    console.log(`🎯 ${ids.length} question id(s) in ${options.questionIds}: ${matched.length} open proposal(s) match${viaPolymarket ? ` (${viaPolymarket} by Polymarket neg-risk question id)` : ''}.`);
     if (missing.length > 0) {
         writeFileSync(`${file}.missing.txt`, missing.join('\n') + '\n');
         console.warn(

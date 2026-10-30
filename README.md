@@ -89,8 +89,11 @@ team), skip both the prompts and the agents:
 ```bash
 yarn dispute --question-ids ids.txt --dry-run
 ```
-- **Input:** `ids.txt` holds UMA question ids (keccak256 of the ancillary data): one per line, a JSON array, or a
-  selection file with `include.question_ids`.
+- **Input:** `ids.txt` holds question ids: one per line, a JSON array, or a selection file with `include.question_ids`.
+  Either id works:
+  - the UMA question id: keccak256 of the ancillary data, Gamma's `negRiskRequestID` for neg-risk markets;
+  - Polymarket's `questionID`, which differs for neg-risk markets (every midterm race) and is looked up on chain
+    through the NegRiskOperator.
 - **What it does:**
   - matches the ids against the open proposals in the lookback window;
   - writes the ones it can't find (settled, already disputed, not proposed yet, or older than `BLOCK_LOOKBACK_PERIOD`) to
