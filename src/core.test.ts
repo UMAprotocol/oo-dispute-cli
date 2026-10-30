@@ -99,3 +99,24 @@ test("chunk and formatExpiryTime", () => {
     assert.equal(formatExpiryTime(-5), "EXPIRED");
     assert.equal(formatExpiryTime(3661), "1 hour(s), 1 minute(s), 1 second(s)");
 });
+
+test("config defaults to Polygon and its DisputeBatcher, with overrides", async () => {
+    const { initConfig } = await import("./config");
+    const { DISPUTE_BATCHER_ADDRESSES } = await import("./constants");
+    const previous = process.env.NODE_URL_137;
+    process.env.NODE_URL_137 = "http://127.0.0.1:1"; // read by the retry provider; nothing is called
+    try {
+        const options = { multiplier: "4", onlyPolymarket: true, sortRemainingTime: true, sortBondSize: false, sortRandom: false, sortAge: false, managedOo: false, oracle: "all", batch: true, dryRun: true };
+        const base = { NODE_URL_137: "http://127.0.0.1:1", PRIVATE_KEY: ethers.Wallet.createRandom().privateKey };
+        const config = await initConfig(base, options);
+        assert.equal(config.chainId, 137, "no CHAIN_ID means Polygon");
+        assert.equal(config.disputeBatcherAddress, DISPUTE_BATCHER_ADDRESSES[137]);
+        assert.equal((await initConfig({ ...base, DISPUTE_BATCHER_ADDRESS: "none" }, options)).disputeBatcherAddress, undefined);
+        const custom = "0x000000000000000000000000000000000000bEEF";
+        assert.equal((await initConfig({ ...base, DISPUTE_BATCHER_ADDRESS: custom }, options)).disputeBatcherAddress, custom);
+        assert.equal((await initConfig({ ...base, OOV2_ADDRESS: custom }, options)).disputeBatcherAddress, undefined, "the known batcher is bound to the real OOv2");
+    } finally {
+        if (previous === undefined) delete process.env.NODE_URL_137;
+        else process.env.NODE_URL_137 = previous;
+    }
+});

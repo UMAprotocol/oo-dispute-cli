@@ -16,11 +16,11 @@ own `multicall`. If batching fails, it falls back to one transaction per dispute
 yarn install --frozen-lockfile && yarn build
 ```
 
-Then configure the chain, the RPC and the key. Either copy `.env.example` to `.env` and fill it in, or export them
-in the shell:
+Then configure the RPC and the key (the chain defaults to Polygon). Either copy `.env.example` to `.env` and fill it
+in, or export them in the shell:
 
 ```bash
-export CHAIN_ID=137 NODE_URLS_137='["https://<rpc-1>","https://<rpc-2>"]'
+export NODE_URLS_137='["https://<rpc-1>","https://<rpc-2>"]'
 ```
 
 ```bash
@@ -62,8 +62,11 @@ Always try `--dry-run` first: it reads, re-checks and simulates everything, but 
   - Only `yarn dispute` and `yarn apply` read `PRIVATE_KEY`, from the environment or a `.env` (gitignored).
   - The MCP server that agents use never takes it, even if a `.env` defines it.
   - Never paste the key into an agent chat.
-- **DisputeBatcher:** not deployed on Polygon yet (UMAprotocol/mcp-otb#2826). Leave `DISPUTE_BATCHER_ADDRESS` empty
-  until it is. Permissionless OOv2 disputes then go one per transaction; Managed OOv2 disputes are batched either way.
+- **DisputeBatcher:** deployed on Polygon at
+  [`0xa7f9aa0DFaeDdd51fa75180F3467ea1bB0ffE8fC`](https://polygonscan.com/address/0xa7f9aa0dfaeddd51fa75180f3467ea1bb0ffe8fc)
+  (UMAprotocol/mcp-otb#2826) and used by default for the permissionless OOv2. The CLI checks at start-up that it is
+  bound to the OOv2. Approve the bond token for it ahead of time. `DISPUTE_BATCHER_ADDRESS=none` sends one dispute per
+  transaction instead. Managed OOv2 disputes are batched through its own `multicall` either way.
 
 ## A. Dispute from the terminal
 
@@ -191,7 +194,7 @@ To stress-test the queue with thousands of simultaneous proposals, without spend
 | Symptom | Fix |
 |---|---|
 | `secp256k1 unavailable, reverting to browser version` | Harmless. |
-| `CHAIN_ID is not set` / `No RPC configured` | Export the variables, put them in `.env` (CLI), or in `.oo-dispute/mcp.env` (agents). |
+| `No RPC configured` | Export `NODE_URLS_137`, put it in `.env` (CLI), or in `.oo-dispute/mcp.env` (agents). |
 | `exceed maximum block range`, `Log response size exceeded`, slow scans | Rejected ranges are halved automatically; if scans stay slow, set `MAX_BLOCK_LOOK_BACK=1000` (or lower), or use another provider. |
 | `oo-dispute` server missing or "failed to start" (Claude Code or Codex) | Run `yarn agents:setup` (again after switching Node versions), open a new session in this folder, and check `.oo-dispute/mcp.env`. |
 | Codex says the `oo-dispute` tools aren't available and offers to start the server itself | Stop it and run `yarn agents:setup`; Codex only loads MCP servers when a session starts. |
@@ -264,11 +267,11 @@ To stress-test the queue with thousands of simultaneous proposals, without spend
 
 | Variable | Used by | Default / notes |
 |---|---|---|
-| `CHAIN_ID` | all | Required. 137 for Polygon |
+| `CHAIN_ID` | all | 137 (Polygon) |
 | `NODE_URLS_137` / `NODE_URL_137` | all | Required. A JSON array of RPCs tried in order (wins), or a single URL |
 | `NODE_RETRIES`, `NODE_RETRY_DELAY`, `NODE_TIMEOUT` | all | 2 retries, 1 s, 60000 ms |
 | `PRIVATE_KEY` | `dispute`, `apply` | Required there; never read by the MCP server |
-| `DISPUTE_BATCHER_ADDRESS` | `dispute`, `apply` | Empty: OOv2 disputes go one per transaction |
+| `DISPUTE_BATCHER_ADDRESS` | `dispute`, `apply` | Polygon's DisputeBatcher (`0xa7f9…E8fC`); another address to override, `none` for one OOv2 dispute per transaction. Not defaulted when `OOV2_ADDRESS` is set |
 | `BLOCK_LOOKBACK_PERIOD` | all | 43200 (~24 h) blocks scanned on a fresh start |
 | `START_BLOCK` | MCP, `apply` | First block a fresh review queue scans (overrides the lookback) |
 | `MAX_BLOCK_LOOK_BACK` | all | 3499 blocks per `eth_getLogs` call |
