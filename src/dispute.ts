@@ -85,7 +85,7 @@ export class DisputeEngine {
         const oov2 = config.oracles.find((o) => o.kind === "oov2");
         if (!oov2) return;
         if (!config.disputeBatcherAddress) {
-            console.log("ℹ️  DISPUTE_BATCHER_ADDRESS not set: OOv2 disputes go one per transaction (Managed OOv2 still batches via multicall).");
+            console.log("ℹ️  No DisputeBatcher for this chain (or DISPUTE_BATCHER_ADDRESS=none): OOv2 disputes go one per transaction (Managed OOv2 still batches via multicall).");
             return;
         }
         try {

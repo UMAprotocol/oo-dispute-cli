@@ -3,6 +3,8 @@ export const POLYGON_BLOCKS_PER_HOUR = 1800;
 export const POLYGON_CHAIN_ID = 137;
 export const POLYGON_OOV2_ADDRESS = "0xeE3Afe347D5C74317041E2618C49534dAf887c24";
 export const POLYGON_MANAGED_OOV2_ADDRESS = "0x2C0367a9DB231dDeBd88a94b4f6461a6e47C58B1";
+// DisputeBatcher (UMAprotocol/mcp-otb#2826) bound to the OOv2 above. Used unless DISPUTE_BATCHER_ADDRESS overrides it.
+export const DISPUTE_BATCHER_ADDRESSES: Record<number, string> = { [POLYGON_CHAIN_ID]: "0xa7f9aa0DFaeDdd51fa75180F3467ea1bB0ffE8fC" };
 
 export const POLYMARKET_REQUESTER_ADDRESSES = [
     "0xCB1822859cEF82Cd2Eb4E6276C7916e692995130", // binary
