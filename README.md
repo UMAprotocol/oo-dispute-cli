@@ -84,6 +84,23 @@ The queue is also sent when it's full, or when a queued proposal is about to exp
 real. Managed OOv2 proposals past their liveness are still shown: they can be disputed until the resolver settles
 them.
 
+**A known list of question ids.** When you already know which markets to dispute (for example a list from another
+team), skip both the prompts and the agents:
+```bash
+yarn dispute --question-ids ids.txt --dry-run
+```
+- **Input:** `ids.txt` holds UMA question ids (keccak256 of the ancillary data): one per line, a JSON array, or a
+  selection file with `include.question_ids`.
+- **What it does:**
+  - matches the ids against the open proposals in the lookback window;
+  - writes the ones it can't find (settled, already disputed, not proposed yet, or older than `BLOCK_LOOKBACK_PERIOD`) to
+    `ids.txt.missing.txt`;
+  - shows the count and the total bond;
+  - asks once for the whole list.
+- **Sending:** each proposal is still re-checked on chain, and disputes go out in batches of 20.
+- **Unattended:** `--yes --max-disputes N --max-bond X` sends without asking, within those caps.
+- **Re-running:** proposals already disputed no longer match, so running it again is safe.
+
 ## B. Review with agents (Claude Code or Codex)
 
 Agents review; you send. Nothing is hosted: the agent starts the MCP server (`dist/mcp-entry.js`) as a local
@@ -214,6 +231,9 @@ To stress-test the queue with thousands of simultaneous proposals, without spend
 |---|---|---|
 | `-t` / `-b` / `-r` / `-a` | `-t` | Sort by time left / bond / random / event order |
 | `--flush-before <min>` | 10 | Send the queue when a queued proposal expires within this many minutes |
+| `--question-ids <file>` | | Dispute this list of question ids directly, with one confirmation |
+| `-y, --yes` | off | With `--question-ids`: send without asking (needs `--max-disputes` and `--max-bond`) |
+| `--max-disputes <n>` / `--max-bond <amount>` | none | With `--question-ids`: caps for this run (bond in token units) |
 
 **`apply` only:**
 

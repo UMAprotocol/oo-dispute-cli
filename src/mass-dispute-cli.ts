@@ -21,6 +21,10 @@ program
     .option('--batch-size <number>', 'Disputes per batch transaction', '20')
     .option('--flush-before <minutes>', 'Send queued disputes when one of them expires within this many minutes', '10')
     .option('-d, --dry-run', 'Simulate disputes without approving or sending anything', false)
+    .option('--question-ids <file>', 'Dispute these UMA question ids directly, no per-proposal prompt (JSON array, selection file, or one id per line)')
+    .option('-y, --yes', 'With --question-ids: send without asking (requires --max-disputes and --max-bond)', false)
+    .option('--max-disputes <n>', 'With --question-ids: maximum disputes to send in this run')
+    .option('--max-bond <amount>', 'With --question-ids: maximum total bond to post in this run, in bond token units')
     .action(handleCLI);
 
 program
