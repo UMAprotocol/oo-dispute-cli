@@ -6,7 +6,11 @@
 //   node scripts/load/fork-load.js report <dir>                 on-chain outcome vs. the answer key, plus timings
 //
 // generate options (env): COUNT (1000), MINUTES (10, spread of the bursts), WAVES (20), LIVENESS (1200 s),
-// WRONG_RATE (0.1), SELECTION (selections/midterms-2026.json).
+// WRONG_RATE (0.1), SELECTION (selections/midterms-2026.json), REAL_ANCILLARY (off).
+//
+// REAL_ANCILLARY=1 proposes each market with its real ancillary data, read from Polymarket's UMA CTF adapter on
+// mainnet (MAINNET_RPC, default FORK_URL), so the UMA question ids (keccak256 of the ancillary data, Gamma's
+// negRiskRequestID for neg-risk markets) are the real ones. answers.json records them as question_id.
 //
 // A fresh OptimisticOracleV2 is deployed against UMA's real Finder: it uses the real Store and whitelists, but its
 // storage is local to the fork, so thousands of requests don't each wait on the remote RPC for new storage slots.
@@ -126,7 +130,8 @@ async function loadMarkets(selectionFile) {
                     const events = response.ok ? await response.json() : [];
                     for (const event of events) {
                         for (const m of event.markets ?? []) {
-                            if (m.id && m.question && m.description) markets.push({ id: String(m.id), question: m.question, description: m.description, event: slug });
+                            if (m.id && m.question && m.description)
+                                markets.push({ id: String(m.id), question: m.question, description: m.description, event: slug, umaQuestionId: m.negRiskRequestID || m.questionID, adapter: m.resolvedBy });
                         }
                     }
                 } catch {
@@ -146,6 +151,35 @@ function ancillaryFor(market) {
         `Where p1 corresponds to No, p2 to Yes, p3 to unknown/50-50. Updates made by the question creator via the bulletin board at ${BULLETIN_BOARD} ` +
         `as described by https://polygonscan.com/tx/0x0 should be considered.,initializer:${proposer.address.slice(2).toLowerCase()}`;
     return ethers.utils.hexlify(ethers.utils.toUtf8Bytes(text));
+}
+
+const ADAPTER_ABI = [
+    "function getQuestion(bytes32) view returns (tuple(uint256 requestTimestamp,uint256 reward,uint256 proposalBond,uint256 liveness,uint256 manualResolutionTimestamp,bool resolved,bool paused,bool reset,bool refund,address rewardToken,address creator,bytes ancillaryData))",
+];
+
+// Real ancillary data for each market, from the adapter on mainnet. Markets whose question isn't found (or whose
+// ancillary data doesn't hash to the id) are dropped.
+async function loadRealAncillary(markets) {
+    const rpc = process.env.MAINNET_RPC || process.env.FORK_URL;
+    if (!rpc) throw new Error("REAL_ANCILLARY needs MAINNET_RPC (or FORK_URL)");
+    const mainnet = new ethers.providers.StaticJsonRpcProvider({ url: rpc, timeout: 60_000 }, 137);
+    const found = [];
+    let next = 0;
+    await Promise.all(
+        Array.from({ length: 16 }, async () => {
+            while (next < markets.length) {
+                const m = markets[next++];
+                if (!m.umaQuestionId || !m.adapter) continue;
+                try {
+                    const { ancillaryData } = await new ethers.Contract(m.adapter, ADAPTER_ABI, mainnet).getQuestion(m.umaQuestionId);
+                    if (ancillaryData !== "0x" && ethers.utils.keccak256(ancillaryData) === m.umaQuestionId) found.push({ ...m, ancillaryData });
+                } catch {
+                    // Unknown question or RPC hiccup: the market is left out.
+                }
+            }
+        })
+    );
+    return found;
 }
 
 function shuffle(items) {
@@ -177,7 +211,12 @@ async function generate(dir) {
 
     // Whole events go out together, like a race being called: all its markets are proposed at once. Each event (a
     // neg-risk set) has exactly one true Yes; a wrong proposal flips that (an extra Yes, or the winner proposed No).
-    const markets = await loadMarkets(path.resolve(REPO, process.env.SELECTION || "selections/midterms-2026.json"));
+    let markets = await loadMarkets(path.resolve(REPO, process.env.SELECTION || "selections/midterms-2026.json"));
+    if (process.env.REAL_ANCILLARY === "1") {
+        const before = markets.length;
+        markets = await loadRealAncillary(markets);
+        console.log(`Real ancillary data for ${markets.length} of ${before} markets.`);
+    }
     const byEvent = new Map();
     for (const m of markets) byEvent.set(m.event, [...(byEvent.get(m.event) ?? []), m]);
     const pool = [];
@@ -212,7 +251,8 @@ async function generate(dir) {
         const items = batch.map((market) => {
             const wrong = Math.random() < wrongRate;
             const proposed = wrong ? (market.truth === "p2" ? "p1" : "p2") : market.truth;
-            return { market_id: market.id, title: market.question, event: market.event, ancillaryData: ancillaryFor(market), timestamp, proposed, truth: market.truth, wrong };
+            const ancillaryData = market.ancillaryData ?? ancillaryFor(market);
+            return { market_id: market.id, title: market.question, event: market.event, ancillaryData, question_id: ethers.utils.keccak256(ancillaryData), timestamp, proposed, truth: market.truth, wrong };
         });
 
         // The answer key goes out before the proposals, so a fast reviewer never sees a proposal without its answer.

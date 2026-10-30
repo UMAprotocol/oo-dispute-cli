@@ -1,8 +1,10 @@
 import { BigNumber, ethers } from 'ethers';
+import { mapWithConcurrency } from './concurrency';
 import { questionId } from './polymarket';
 import { Proposal } from './proposals';
 
-// A list of UMA question ids (keccak256 of the ancillary data) to dispute without the review queue. Accepts a JSON
+// A list of question ids to dispute without the review queue: UMA question ids (keccak256 of the ancillary data) or
+// Polymarket's (which differ for neg-risk markets, see polymarket-ids.ts). Accepts a JSON
 // array, a selection file ({ include: { question_ids } }), or plain text with one id per line (commas, spaces and
 // # comments allowed).
 export function parseQuestionIds(text: string): string[] {
@@ -31,20 +33,43 @@ export interface QuestionIdMatch {
     missing: string[];
     // Ids with more than one open request (the same ancillary data requested again), all of which are disputed.
     repeated: string[];
+    // How many ids matched as Polymarket question ids rather than UMA ones.
+    viaPolymarket: number;
 }
 
-export function matchQuestionIds(proposals: Proposal[], ids: string[]): QuestionIdMatch {
+// Matches UMA question ids first. Ids left over are then looked up as Polymarket question ids through
+// `polymarketId` (an on-chain call per remaining proposal), which only runs when some ids didn't match.
+export async function matchQuestionIds(proposals: Proposal[], ids: string[], polymarketId?: (proposal: Proposal) => Promise<string | undefined>): Promise<QuestionIdMatch> {
     const wanted = new Set(ids);
     const byId = new Map<string, Proposal[]>();
+    const add = (id: string, proposal: Proposal) => byId.set(id, [...(byId.get(id) ?? []), proposal]);
+    const matched = new Set<Proposal>();
     for (const proposal of proposals) {
         const id = questionId(proposal.ancillaryData).toLowerCase();
         if (!wanted.has(id)) continue;
-        byId.set(id, [...(byId.get(id) ?? []), proposal]);
+        add(id, proposal);
+        matched.add(proposal);
+    }
+    let viaPolymarket = 0;
+    const leftover = new Set(ids.filter((id) => !byId.has(id)));
+    if (leftover.size > 0 && polymarketId) {
+        await mapWithConcurrency(
+            proposals.filter((proposal) => !matched.has(proposal)),
+            10,
+            async (proposal) => {
+                const id = (await polymarketId(proposal))?.toLowerCase();
+                if (!id || !leftover.has(id)) return;
+                if (!byId.has(id)) viaPolymarket++;
+                add(id, proposal);
+                matched.add(proposal);
+            }
+        );
     }
     return {
-        matched: proposals.filter((proposal) => byId.has(questionId(proposal.ancillaryData).toLowerCase())),
+        matched: proposals.filter((proposal) => matched.has(proposal)),
         missing: ids.filter((id) => !byId.has(id)),
         repeated: [...byId].filter(([, list]) => list.length > 1).map(([id]) => id),
+        viaPolymarket,
     };
 }
 

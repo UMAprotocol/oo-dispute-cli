@@ -61,6 +61,7 @@ tokens:
 | `REVIEWERS` | 10 | scripted reviewers |
 | `THINK_MS` | `2000-8000` | simulated time per group |
 | `UNCLEAR_RATE` | 0.15 | first looks that answer unclear |
+| `REAL_ANCILLARY` | off | `1`: propose each market with its real ancillary data, read from Polymarket's UMA CTF adapter on mainnet (`MAINNET_RPC`, default `FORK_URL`), so question ids are the real ones (`answers.json` → `question_id`) |
 | `FORK_URL` / `FORK_PORT` / `FORK_RPC` | drpc / 8556 / – | fork source, port, or reuse a running fork |
 
 For a quick 3-market check:
@@ -84,6 +85,16 @@ It never touches `.oo-dispute/mcp.env`.
 |---|---|---|---|---|---|---|
 | 1,000 proposals / 10 min, 20-min liveness, 10 reviewers | 98 / 98 | 0 | 0 | 1,136 | 40 s | 12.5 min |
 | 4,500 proposals / 30 min, 30-min liveness, grouped by event | 446 / 446 | 0 | 0 | 973 | 32 s | 16.8 min |
+
+**`yarn dispute --question-ids` at scale.** 3,000 midterm markets were proposed with their real ancillary data (`REAL_ANCILLARY=1`), half of them wrong. The 1,518 real UMA question ids of the wrong ones were passed in one file with `--yes`:
+- **Result:** 1,518 / 1,518 disputed and 0 correct ones touched.
+- **Transactions:** 76 DisputeBatcher transactions of 20. Each used ~5.3M gas, about 265k per dispute.
+- **Time:** 7.2 min end to end, including the scan of the 3,000 open proposals.
+- **Memory:** 0.5 GB peak RSS.
+
+A second run used 600 proposals and an id file mixing 255 UMA question ids with 35 Polymarket neg-risk `questionID`s
+from Gamma. All 290 were disputed, the 35 matched through the on-chain NegRiskOperator lookup, and 0 correct proposals
+were touched. It took 15 transactions and 90 s.
 
 The queue isn't the bottleneck: `next_batch` takes ~0.2 s and `submit_review` a few ms. With real LLM reviewers,
 capacity depends on how many run in parallel and how long each review takes. Grouping by event means about 515

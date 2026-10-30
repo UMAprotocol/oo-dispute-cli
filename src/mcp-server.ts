@@ -5,6 +5,7 @@ import { randomBytes } from "crypto";
 import { readFileSync } from "fs";
 import { userPath } from "./paths";
 import { z } from "zod";
+import { mapWithConcurrency } from "./concurrency";
 import { initConfig } from "./config";
 import { Options } from "./handler";
 import { ORCHESTRATOR_GUIDE, REVIEWER_POLICY, SERVER_INSTRUCTIONS } from "./review/prompts";
@@ -212,10 +213,11 @@ export async function startMcpServer(argv: string[]) {
         },
         ({ scope }) =>
             respond(() =>
-                queue.candidates(scopeOf(scope)).map(({ stored, evaluation }) => ({
+                // One on-chain lookup per candidate (cached), within the RPC concurrency limit.
+                mapWithConcurrency(queue.candidates(scopeOf(scope)), config.rpcConcurrency, async ({ stored, evaluation }) => ({
                     ...queue.summary(stored, evaluation, Math.floor(Date.now() / 1000)),
                     confirming_agents: evaluation.confirmingAgents,
-                    ...queue.identifiers(stored),
+                    ...(await queue.identifiers(stored)),
                 }))
             )
     );

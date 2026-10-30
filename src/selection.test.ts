@@ -81,7 +81,7 @@ test("resolveSelection turns slugs, event slugs and tags into ids and reports wh
         calls.push(url);
         if (url.includes("/markets?slug=senate-2026&closed=false")) return json([{ id: "201", questionID: "0xAA", conditionId: "0xBB" }]);
         if (url.includes("/markets?slug=")) return json([]);
-        if (url.includes("/events?slug=midterms")) return json([{ markets: [{ id: "202" }, { id: "203", questionID: "0xCC" }] }]);
+        if (url.includes("/events?slug=midterms")) return json([{ markets: [{ id: "202" }, { id: "203", questionID: "0xCC" }, { id: "204", questionID: "0xNEGRISK", negRiskRequestID: "0xDD" }] }]);
         if (url.includes("tag_slug=elections") && url.includes("offset=0")) return json(Array.from({ length: 100 }, (_, i) => ({ markets: [{ id: String(1000 + i) }] })));
         if (url.includes("tag_slug=elections") && url.includes("offset=100")) return json([{ markets: [{ id: "2000" }] }]);
         if (url.includes("tag_slug=broken")) return { ok: false, status: 503, json: async () => ({}) };
@@ -95,8 +95,8 @@ test("resolveSelection turns slugs, event slugs and tags into ids and reports wh
     assert.equal(resolved.include?.tags, undefined);
     assert.equal(resolved.include?.title_regex, "Senate");
     assert.ok(resolved.include?.market_ids?.includes("201") && resolved.include.market_ids.includes("203") && resolved.include.market_ids.includes("2000"));
-    assert.equal(resolved.include?.market_ids?.length, 3 + 101);
-    assert.deepEqual(resolved.include?.question_ids, ["0xaa", "0xcc"]);
+    assert.equal(resolved.include?.market_ids?.length, 4 + 101);
+    assert.deepEqual(resolved.include?.question_ids, ["0xaa", "0xcc", "0xdd"], "neg-risk markets store the UMA question id (negRiskRequestID)");
     assert.deepEqual(resolved.include?.condition_ids, ["0xbb"]);
     assert.deepEqual(resolved.resolved?.from.tags, ["elections", "broken"]);
     assert.equal(resolved.resolved?.unresolved.length, 2);

@@ -125,6 +125,9 @@ interface GammaEvent {
 }
 interface GammaMarket extends Omit<GammaEvent, "title"> {
     questionID?: string;
+    // For neg-risk markets questionID is Polymarket's own id; the UMA question id (keccak256 of the ancillary data,
+    // what proposals are matched on) is negRiskRequestID.
+    negRiskRequestID?: string;
     conditionId?: string;
     events?: GammaEvent[];
     _event?: GammaEvent;
@@ -212,7 +215,8 @@ async function resolveCriteria(c: CriteriaT | undefined, fetchFn: Fetch, unresol
                     index.events[group.key] = { title: group.title, exclusive: group.exclusive };
                 }
                 if (m.id !== undefined) marketIds.add(String(m.id));
-                if (m.questionID) questionIds.add(m.questionID.toLowerCase());
+                const umaQuestionId = m.negRiskRequestID || m.questionID;
+                if (umaQuestionId) questionIds.add(umaQuestionId.toLowerCase());
                 if (m.conditionId) conditionIds.add(m.conditionId.toLowerCase());
             }
         } catch (error) {
