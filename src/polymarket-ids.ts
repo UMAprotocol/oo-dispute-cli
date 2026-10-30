@@ -21,30 +21,42 @@ const OPERATOR_ABI = ["function questionIds(bytes32) view returns (bytes32)", "f
 
 type NegRiskRoute = { operator: ethers.Contract; nrAdapter: string } | null;
 
+const REVERTED = Symbol("reverted");
+
+// A revert (or no contract at the address) is a stable answer: the contract doesn't have that function. Anything else
+// (RPC down, timeout, rate limit) is retried and then thrown, so it is never mistaken for "not neg-risk".
+async function call<T>(fn: () => Promise<T>): Promise<T | typeof REVERTED> {
+    return withRetry(async () => {
+        try {
+            return await fn();
+        } catch (error) {
+            if ((error as { code?: string })?.code === "CALL_EXCEPTION") return REVERTED;
+            throw error;
+        }
+    }, 2);
+}
+
 export class PolymarketIdResolver {
     private routes = new Map<string, Promise<NegRiskRoute>>();
     private ids = new Map<string, Promise<PolymarketIds>>();
 
     constructor(private provider: Provider) {}
 
-    // Whether this requester is an adapter wired to a NegRiskOperator. Anything that doesn't answer these calls (an
-    // adapter on plain ConditionalTokens, or not an adapter at all) is treated as a plain request.
+    // Whether this requester is an adapter wired to a NegRiskOperator. A requester whose calls revert (an adapter on
+    // plain ConditionalTokens, or not an adapter at all) is a plain request, and that answer is cached. A failed RPC
+    // call rejects and is not cached, so the next lookup asks again.
     private route(requester: string): Promise<NegRiskRoute> {
         const key = requester.toLowerCase();
         if (!this.routes.has(key)) {
-            this.routes.set(
-                key,
-                (async () => {
-                    try {
-                        const ctf: string = await withRetry(() => new ethers.Contract(requester, ADAPTER_ABI, this.provider).ctf(), 2);
-                        const operator = new ethers.Contract(ctf, OPERATOR_ABI, this.provider);
-                        const nrAdapter: string = await withRetry(() => operator.nrAdapter(), 2);
-                        return { operator, nrAdapter };
-                    } catch {
-                        return null;
-                    }
-                })()
-            );
+            const lookup = (async (): Promise<NegRiskRoute> => {
+                const ctf = await call<string>(() => new ethers.Contract(requester, ADAPTER_ABI, this.provider).ctf());
+                if (ctf === REVERTED) return null;
+                const operator = new ethers.Contract(ctf, OPERATOR_ABI, this.provider);
+                const nrAdapter = await call<string>(() => operator.nrAdapter());
+                return nrAdapter === REVERTED ? null : { operator, nrAdapter };
+            })();
+            lookup.catch(() => this.routes.delete(key));
+            this.routes.set(key, lookup);
         }
         return this.routes.get(key)!;
     }

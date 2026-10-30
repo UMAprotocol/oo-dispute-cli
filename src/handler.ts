@@ -124,12 +124,22 @@ async function run(options: Options, ask: (question: string) => Promise<string>)
 async function disputeQuestionIds(options: Options, config: Config, engine: DisputeEngine, proposals: Proposal[], ask: (question: string) => Promise<string>) {
     const file = userPath(options.questionIds!);
     const ids = parseQuestionIds(readFileSync(file, 'utf8'));
-    // Ids that aren't UMA question ids are looked up as Polymarket ones (neg-risk markets), on chain.
+    // Ids that aren't UMA question ids are looked up as Polymarket ones (neg-risk markets), on chain. A lookup that
+    // fails (RPC) leaves that proposal unmatched and is reported, rather than guessed.
     const resolver = new PolymarketIdResolver(config.provider);
+    let lookupFailures = 0;
     const { matched, missing, repeated, viaPolymarket } = await matchQuestionIds(proposals, ids, async (proposal) => {
-        const resolved = await resolver.resolve(proposal.requester, proposal.ancillaryData);
-        return resolved.neg_risk ? resolved.polymarket_question_id : undefined;
+        try {
+            const resolved = await resolver.resolve(proposal.requester, proposal.ancillaryData);
+            return resolved.neg_risk ? resolved.polymarket_question_id : undefined;
+        } catch {
+            lookupFailures++;
+            return undefined;
+        }
     });
+    if (lookupFailures > 0) {
+        console.warn(`🚨 ${lookupFailures} proposal(s) could not be checked for a Polymarket question id (RPC errors): Polymarket ids may be reported missing. Re-run to retry.`);
+    }
     console.log(`🎯 ${ids.length} question id(s) in ${options.questionIds}: ${matched.length} open proposal(s) match${viaPolymarket ? ` (${viaPolymarket} by Polymarket neg-risk question id)` : ''}.`);
     if (missing.length > 0) {
         writeFileSync(`${file}.missing.txt`, missing.join('\n') + '\n');
