@@ -111,6 +111,8 @@ test("config defaults to Polygon and its DisputeBatcher, with overrides", async 
         const config = await initConfig(base, options);
         assert.equal(config.chainId, 137, "no CHAIN_ID means Polygon");
         assert.equal(config.disputeBatcherAddress, DISPUTE_BATCHER_ADDRESSES[137]);
+        assert.equal(config.gasPerDispute, 1_000_000, "budget for neg-risk disputes with long ancillary data");
+        assert.equal((await initConfig({ ...base, GAS_PER_DISPUTE: "1200000" }, options)).gasPerDispute, 1_200_000);
         assert.equal((await initConfig({ ...base, DISPUTE_BATCHER_ADDRESS: "none" }, options)).disputeBatcherAddress, undefined);
         const custom = "0x000000000000000000000000000000000000bEEF";
         assert.equal((await initConfig({ ...base, DISPUTE_BATCHER_ADDRESS: custom }, options)).disputeBatcherAddress, custom);

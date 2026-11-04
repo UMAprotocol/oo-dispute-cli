@@ -145,10 +145,14 @@ process, and it keeps a shared queue in `.oo-dispute/review-137.sqlite` in this 
 5. **Send the disputes** from a terminal, with the same `CHAIN_ID`/RPC and your key. It shares the agents' queue,
    `.oo-dispute/review-137.sqlite` in this repo, from whatever folder you run it:
    ```bash
-   yarn apply --watch --scope selections/midterms-2026.resolved.json --dry-run
+   yarn apply --watch --scope selections/midterms-2026.resolved.json --batch-size 50 --dry-run
    ```
    - Passing the file (rather than the scope name) works even if `apply` starts before the agents. Drop `--dry-run`
      to send. It asks before each batch, unless you pass `--auto --max-disputes N --max-bond X`.
+   - The default gas budget is 1,000,000 per dispute, allowing headroom for neg-risk markets with long rules.
+     Remove an older `GAS_PER_DISPUTE=500000` override or set it to `1000000`. In the dry run, check for
+     `would dispute via DisputeBatcher in a batch of N`. `retrying one per transaction` means batching fell back
+     to individual sends; check the preceding simulation errors and gas budget before sending.
    - Stop it with Ctrl+C.
    - If reviewers disagree with each other (a `conflict`), it's never sent automatically: `apply` reports it, and you
      decide.
@@ -187,7 +191,7 @@ To stress-test the queue with thousands of simultaneous proposals, without spend
 - [ ] `yarn select resolve selections/midterms-2026.json` re-run in the last day.
 - [ ] A rehearsal done (`yarn fork:up` … `yarn fork:down`), and `.oo-dispute/mcp.env` points at mainnet again.
 - [ ] Claude Code / Codex sees the `oo-dispute` server, and `progress` answers.
-- [ ] `yarn apply --dry-run --scope selections/midterms-2026.resolved.json` runs.
+- [ ] `yarn apply --dry-run --scope selections/midterms-2026.resolved.json --batch-size 50` runs and reports batches.
 
 ## Troubleshooting
 
@@ -276,7 +280,7 @@ To stress-test the queue with thousands of simultaneous proposals, without spend
 | `START_BLOCK` | MCP, `apply` | First block a fresh review queue scans (overrides the lookback) |
 | `MAX_BLOCK_LOOK_BACK` | all | 3499 blocks per `eth_getLogs` call |
 | `MIN_PRIORITY_FEE_GWEI` | sending | 30 on Polygon (ethers v5 assumes 1.5) |
-| `GAS_PER_DISPUTE` | sending | 500000 gas budgeted per dispute in a batch |
+| `GAS_PER_DISPUTE` | sending | 1000000 gas budgeted per dispute in a batch |
 | `RPC_CONCURRENCY` | all | 10 calls in flight |
 | `REVIEW_DB` | MCP, `apply` | `.oo-dispute/review-<chain>.sqlite` in the repo |
 | `REVIEW_SELECTION` | MCP | Comma-separated selection files loaded at start-up |
