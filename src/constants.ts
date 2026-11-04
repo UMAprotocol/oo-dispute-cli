@@ -32,7 +32,8 @@ export const DEFAULT_MIN_PRIORITY_FEE_GWEI = 1.5;
 export const DEFAULT_BATCH_SIZE = 20;
 // Gas budgeted per dispute in a batch. Batches are NOT sized with estimateGas: the batcher wraps each dispute in
 // try/catch, so the lowest non-reverting gas limit can silently skip the last disputes with out-of-gas.
-export const DEFAULT_GAS_PER_DISPUTE = 500_000;
+// Neg-risk disputes with long ancillary data can use ~790k; leave headroom to avoid falling back to single sends.
+export const DEFAULT_GAS_PER_DISPUTE = 1_000_000;
 export const BATCH_GAS_OVERHEAD = 200_000;
 export const DEFAULT_RPC_CONCURRENCY = 10;
 // Proposals expiring within this many seconds are not worth sending: the transaction would likely land too late.
